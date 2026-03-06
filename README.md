@@ -1,6 +1,6 @@
-# Reverse Proxy VS Code Extension
+# Reverse Proxy VSCode Extension
 
-This extension starts/stops an SSH reverse proxy from VS Code.
+This extension starts/stops an SSH reverse proxy from VSCode.
 
 ## Commands
 
@@ -59,4 +59,5 @@ npm install
 npm run compile
 ```
 
-Press `F5` in VS Code to launch Extension Development Host.
+Press `F5` in VSCode to launch Extension Development Host.
+
