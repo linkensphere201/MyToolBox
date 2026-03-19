@@ -5,6 +5,7 @@ import * as os from 'os';
 import { ChildProcessWithoutNullStreams, spawn } from 'child_process';
 
 let sshProcess: ChildProcessWithoutNullStreams | null = null;
+let externalTunnelPid: number | null = null;
 let outputChannel: vscode.OutputChannel;
 let statusBarItem: vscode.StatusBarItem;
 let connectTimer: NodeJS.Timeout | null = null;
@@ -29,6 +30,11 @@ type FileProxyConfig = {
 
 type RuntimeProxyConfig = FileProxyConfig & {
   loadedConfigPath: string;
+};
+
+type ExistingTunnelMatch = {
+  pid: number;
+  commandLine: string;
 };
 
 type ResolvePathOptions = {
@@ -302,6 +308,199 @@ function verifySshExists(sshPath: string): Promise<void> {
   });
 }
 
+function normalizeCommandLine(commandLine: string): string {
+  return commandLine.replace(/\s+/g, ' ').trim();
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function commandLineHasArg(commandLine: string, value: string): boolean {
+  const pattern = new RegExp(`(^|\\s|["'])${escapeRegExp(value)}(?=\\s|["']|$)`, 'i');
+  return pattern.test(commandLine);
+}
+
+function isMatchingTunnelCommand(commandLine: string, config: RuntimeProxyConfig): boolean {
+  const normalized = normalizeCommandLine(commandLine);
+  if (!normalized) {
+    return false;
+  }
+
+  const reverseSpec = `${config.remoteBindPort}:${config.localHost}:${config.localPort}`;
+  const reverseSpecLower = reverseSpec.toLowerCase();
+  const remoteTarget = `${config.remoteUser}@${config.remoteHost}`;
+  const normalizedLower = normalized.toLowerCase();
+
+  const hasReverseFlag = /(^|\s)-R(?=\s|$)/i.test(normalized);
+  const hasReverseSpec = normalizedLower.includes(reverseSpecLower);
+  if (!hasReverseFlag || !hasReverseSpec) {
+    return false;
+  }
+
+  const hasRemoteTarget =
+    commandLineHasArg(normalized, remoteTarget) ||
+    commandLineHasArg(normalized, config.remoteHost) ||
+    commandLineHasArg(normalized, config.remoteUser);
+
+  if (!hasRemoteTarget) {
+    return false;
+  }
+
+  return true;
+}
+
+function buildWindowsProcessInspectionScript(): string {
+  return [
+    '$ErrorActionPreference = "Stop";',
+    'Get-CimInstance Win32_Process |',
+    '  Where-Object { $_.CommandLine } |',
+    '  Select-Object ProcessId, CommandLine |',
+    '  ConvertTo-Json -Compress'
+  ].join(' ');
+}
+
+function listCandidateProcesses(): Promise<ExistingTunnelMatch[]> {
+  return new Promise((resolve, reject) => {
+    if (process.platform === 'win32') {
+      const script = buildWindowsProcessInspectionScript();
+      const inspector = spawn('powershell.exe', ['-NoProfile', '-Command', script]);
+      let stdout = '';
+      let stderr = '';
+
+      inspector.stdout.on('data', (data: Buffer) => {
+        stdout += data.toString();
+      });
+      inspector.stderr.on('data', (data: Buffer) => {
+        stderr += data.toString();
+      });
+      inspector.on('error', (error) => {
+        reject(new Error(`Failed to inspect existing processes: ${error.message}`));
+      });
+      inspector.on('close', (code) => {
+        if (code !== 0) {
+          reject(new Error(`Process inspection exited with code ${code}: ${stderr.trim()}`));
+          return;
+        }
+
+        const trimmed = stdout.trim();
+        if (!trimmed) {
+          resolve([]);
+          return;
+        }
+
+        try {
+          const parsed = JSON.parse(trimmed) as
+            | { ProcessId?: number; CommandLine?: string }
+            | Array<{ ProcessId?: number; CommandLine?: string }>;
+          const entries = Array.isArray(parsed) ? parsed : [parsed];
+          resolve(
+            entries
+              .filter((entry) => typeof entry.ProcessId === 'number' && typeof entry.CommandLine === 'string')
+              .map((entry) => ({
+                pid: entry.ProcessId as number,
+                commandLine: entry.CommandLine as string
+              }))
+          );
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          reject(new Error(`Failed to parse process inspection output: ${message}`));
+        }
+      });
+      return;
+    }
+
+    const inspector = spawn('ps', ['-ax', '-o', 'pid=', '-o', 'command=']);
+    let stdout = '';
+    let stderr = '';
+
+    inspector.stdout.on('data', (data: Buffer) => {
+      stdout += data.toString();
+    });
+    inspector.stderr.on('data', (data: Buffer) => {
+      stderr += data.toString();
+    });
+    inspector.on('error', (error) => {
+      reject(new Error(`Failed to inspect existing processes: ${error.message}`));
+    });
+    inspector.on('close', (code) => {
+      if (code !== 0) {
+        reject(new Error(`Process inspection exited with code ${code}: ${stderr.trim()}`));
+        return;
+      }
+
+      const matches = stdout
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter((line) => line.length > 0)
+        .map((line) => {
+          const match = line.match(/^(\d+)\s+(.*)$/);
+          if (!match) {
+            return null;
+          }
+          return {
+            pid: Number(match[1]),
+            commandLine: match[2]
+          };
+        })
+        .filter((entry): entry is ExistingTunnelMatch => Boolean(entry));
+      resolve(matches);
+    });
+  });
+}
+
+async function findExistingTunnelProcess(config: RuntimeProxyConfig): Promise<ExistingTunnelMatch | null> {
+  const processes = await listCandidateProcesses();
+  const currentPid = process.pid;
+
+  for (const candidate of processes) {
+    if (candidate.pid === currentPid) {
+      continue;
+    }
+    if (sshProcess?.pid && candidate.pid === sshProcess.pid) {
+      return candidate;
+    }
+    if (isMatchingTunnelCommand(candidate.commandLine, config)) {
+      return candidate;
+    }
+  }
+
+  return null;
+}
+
+async function syncProxyStateFromSystem(config?: RuntimeProxyConfig): Promise<boolean> {
+  let runtimeConfig = config;
+  if (!runtimeConfig) {
+    try {
+      runtimeConfig = getConfig();
+    } catch {
+      return false;
+    }
+  }
+
+  try {
+    const existing = await findExistingTunnelProcess(runtimeConfig);
+    if (!existing) {
+      externalTunnelPid = null;
+      if (!sshProcess && proxyState === 'connected') {
+        setProxyState('stopped');
+      }
+      return false;
+    }
+
+    externalTunnelPid = sshProcess?.pid === existing.pid ? null : existing.pid;
+    if (proxyState !== 'connected') {
+      outputChannel.appendLine(`[sync] detected existing reverse tunnel process pid=${existing.pid}`);
+      setProxyState('connected');
+    }
+    return true;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    outputChannel.appendLine(`[warn] unable to inspect existing tunnel processes: ${message}`);
+    return false;
+  }
+}
+
 async function startProxy(): Promise<void> {
   if (sshProcess) {
     vscode.window.showInformationMessage('Reverse proxy is already running.');
@@ -325,6 +524,12 @@ async function startProxy(): Promise<void> {
   if (vscode.env.remoteName) {
     outputChannel.appendLine(`[mode] workspace is remote (${vscode.env.remoteName}), tunnel runs on local UI host.`);
   }
+
+  if (await syncProxyStateFromSystem(config)) {
+    vscode.window.showInformationMessage('Reverse proxy is already running in another VS Code window.');
+    return;
+  }
+
   setProxyState('starting');
 
   try {
@@ -372,6 +577,7 @@ async function startProxy(): Promise<void> {
   }
 
   stopRequested = false;
+  externalTunnelPid = null;
   let hasFailed = false;
   const markFailed = (message: string): void => {
     if (hasFailed) {
@@ -433,6 +639,7 @@ async function startProxy(): Promise<void> {
     }
 
     sshProcess = null;
+    externalTunnelPid = null;
     stopRequested = false;
   });
 
@@ -440,7 +647,7 @@ async function startProxy(): Promise<void> {
 }
 
 function stopProxy(): void {
-  if (!sshProcess) {
+  if (!sshProcess && !externalTunnelPid) {
     vscode.window.showInformationMessage('Reverse proxy is not running.');
     return;
   }
@@ -451,8 +658,21 @@ function stopProxy(): void {
     clearTimeout(connectTimer);
     connectTimer = null;
   }
-  sshProcess.kill();
-  sshProcess = null;
+  if (sshProcess) {
+    sshProcess.kill();
+    sshProcess = null;
+  } else if (externalTunnelPid) {
+    try {
+      process.kill(externalTunnelPid);
+      outputChannel.appendLine(`[stop] sent termination signal to existing reverse tunnel pid=${externalTunnelPid}`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      outputChannel.appendLine(`[warn] failed to stop existing reverse tunnel pid=${externalTunnelPid}: ${message}`);
+      vscode.window.showErrorMessage(`Failed to stop reverse proxy process ${externalTunnelPid}: ${message}`);
+      return;
+    }
+  }
+  externalTunnelPid = null;
   setProxyState('stopped');
   vscode.window.showInformationMessage('Reverse proxy stopping...');
 }
@@ -462,7 +682,7 @@ async function toggleProxyFromSidebar(): Promise<void> {
     return;
   }
 
-  if (proxyState === 'connected' || sshProcess) {
+  if (proxyState === 'connected' || sshProcess || externalTunnelPid) {
     stopProxy();
     return;
   }
@@ -554,6 +774,8 @@ export function activate(context: vscode.ExtensionContext): void {
     outputChannel.appendLine(`[mode] remote workspace detected (${vscode.env.remoteName}); extension runs on local UI host.`);
   }
 
+  void syncProxyStateFromSystem();
+
   context.subscriptions.push(
     outputChannel,
     statusBarItem,
@@ -636,6 +858,22 @@ export function activate(context: vscode.ExtensionContext): void {
   );
 
   context.subscriptions.push(
+    vscode.commands.registerCommand('reverseProxy.test.syncStateFromSystem', async () => {
+      await syncProxyStateFromSystem();
+      return {
+        state: proxyState,
+        externalTunnelPid
+      };
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('reverseProxy.test.getWindowsProcessInspectionScript', () => {
+      return buildWindowsProcessInspectionScript();
+    })
+  );
+
+  context.subscriptions.push(
     vscode.commands.registerCommand('reverseProxy.test.openSettingsWithDirectory', async (dir: string) => {
       const reverseProxyConfig = vscode.workspace.getConfiguration('reverseProxy');
       const configuredPath = reverseProxyConfig.get<string>('configFile', 'reverse-proxy.config.json');
@@ -661,6 +899,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
 export function deactivate(): void {
   sidebarViewProvider = null;
+  externalTunnelPid = null;
   if (connectTimer) {
     clearTimeout(connectTimer);
     connectTimer = null;

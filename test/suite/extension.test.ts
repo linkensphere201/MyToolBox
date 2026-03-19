@@ -71,6 +71,10 @@ suite('Reverse Proxy Extension Integration Tests', () => {
         '  ping 127.0.0.1 -n 30 >nul',
         '  exit /b 0',
         ')',
+        'if /I "%RPX_FAKE_MODE%"=="fake_other_existing" (',
+        '  ping 127.0.0.1 -n 30 >nul',
+        '  exit /b 0',
+        ')',
         'echo Unknown fake mode: %RPX_FAKE_MODE% 1>&2',
         'exit /b 1'
       ].join('\r\n'),
@@ -252,7 +256,7 @@ suite('Reverse Proxy Extension Integration Tests', () => {
     };
 
     try {
-      writeProxyConfig(17897, { sshPath: '__definitely_missing_ssh_binary__', connectionReadyDelayMs: 200 });
+      writeProxyConfig(49017, { sshPath: '__definitely_missing_ssh_binary__', connectionReadyDelayMs: 200 });
       await config.update('configFile', testConfigFilePath, vscode.ConfigurationTarget.Global);
       await vscode.commands.executeCommand('reverseProxy.start');
 
@@ -345,6 +349,15 @@ suite('Reverse Proxy Extension Integration Tests', () => {
       delete process.env.RPX_FAKE_BIND_PORT;
       await vscode.commands.executeCommand('reverseProxy.stop');
     }
+  });
+
+  test('windows process inspection script should separate statements correctly', async () => {
+    const script = (await vscode.commands.executeCommand(
+      'reverseProxy.test.getWindowsProcessInspectionScript'
+    )) as string;
+
+    assert.ok(script.includes('$ErrorActionPreference = "Stop"; Get-CimInstance Win32_Process |'));
+    assert.ok(!script.includes('$ErrorActionPreference = "Stop" Get-CimInstance'));
   });
 
   test('start command should show connected message when tunnel is established', async () => {
