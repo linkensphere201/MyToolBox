@@ -73,7 +73,8 @@
       "reverseProxy": [
         {
           "id": "reverseProxy.sidebarView",
-          "name": "ToolBox Status"
+          "name": "ToolBox",
+          "type": "webview"
         }
       ]
     },

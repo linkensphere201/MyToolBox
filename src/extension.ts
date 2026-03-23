@@ -1,4 +1,4 @@
-﻿import * as vscode from 'vscode';
+import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
@@ -12,8 +12,7 @@ let keyStatusBarItem: vscode.StatusBarItem;
 let connectTimer: NodeJS.Timeout | null = null;
 let stopRequested = false;
 let extensionContextRef: vscode.ExtensionContext | null = null;
-let sidebarViewProvider: ProxySidebarProvider | null = null;
-let sidebarTreeView: vscode.TreeView<SidebarItem> | null = null;
+let toolBoxWebviewProvider: ToolBoxWebviewProvider | null = null;
 let keyProjectsWorkspaceOverride: string | null = null;
 let keyProjectsCache: KeyProjectsCache | null = null;
 let keyProjectsRefreshPromise: Promise<void> | null = null;
@@ -86,7 +85,40 @@ type KeyProjectsCache = {
   statuses: KeyProjectStatus[];
 };
 
-type SidebarGroupId = 'reverseTunnel' | 'keyProjects';
+type KeyProjectsViewRow = {
+  configuredRepoName: string;
+  repoName: string;
+  branch: string;
+  remoteLabel: string;
+  stateLabel: string;
+  clean: boolean;
+  available: boolean;
+};
+
+type KeyProjectsViewModel = {
+  issue: string | null;
+  configLoaded: boolean;
+  refreshing: boolean;
+  rows: KeyProjectsViewRow[];
+};
+
+type ToolBoxAction = {
+  id: 'toggle' | 'logs' | 'proxySettings' | 'keyRefresh' | 'keySettings';
+  label: string;
+  enabled: boolean;
+};
+
+type ReverseTunnelViewModel = {
+  stateLabel: string;
+  detail: string;
+  tone: 'connected' | 'starting' | 'failed' | 'stopped';
+  actions: ToolBoxAction[];
+};
+
+type ToolBoxViewModel = {
+  reverseTunnel: ReverseTunnelViewModel;
+  keyProjects: KeyProjectsViewModel;
+};
 
 type SidebarTestItem = {
   kind: string;
@@ -94,21 +126,10 @@ type SidebarTestItem = {
   description?: string;
   tooltip?: string;
   command?: string;
+  arguments?: unknown[];
   enabled: boolean;
   parentLabel?: string;
 };
-
-class SidebarItem extends vscode.TreeItem {
-  constructor(
-    public readonly kind: 'group' | 'action' | 'project' | 'info',
-    label: string,
-    collapsibleState: vscode.TreeItemCollapsibleState,
-    public readonly groupId?: SidebarGroupId,
-    public readonly repoName?: string
-  ) {
-    super(label, collapsibleState);
-  }
-}
 
 function getStateLabel(state: ProxyState): string {
   if (state === 'starting') {
@@ -123,182 +144,428 @@ function getStateLabel(state: ProxyState): string {
   return 'Stopped';
 }
 
-class ProxySidebarProvider implements vscode.TreeDataProvider<SidebarItem> {
-  static readonly reverseTunnelGroupLabel = 'ReverseTunnel';
-  static readonly keyProjectsGroupLabel = 'Key Projects';
-  private readonly onDidChangeTreeDataEmitter = new vscode.EventEmitter<void>();
-  readonly onDidChangeTreeData = this.onDidChangeTreeDataEmitter.event;
-
-  refresh(): void {
-    this.onDidChangeTreeDataEmitter.fire();
+function getReverseTunnelTone(state: ProxyState): ReverseTunnelViewModel['tone'] {
+  if (state === 'connected') {
+    return 'connected';
   }
-
-  getTreeItem(element: SidebarItem): vscode.TreeItem {
-    return element;
+  if (state === 'starting') {
+    return 'starting';
   }
+  if (state === 'failed') {
+    return 'failed';
+  }
+  return 'stopped';
+}
 
-  async getChildren(element?: SidebarItem): Promise<SidebarItem[]> {
-    if (!element) {
-      return [
-        this.createGroupItem('reverseTunnel', ProxySidebarProvider.reverseTunnelGroupLabel),
-        this.createGroupItem('keyProjects', ProxySidebarProvider.keyProjectsGroupLabel)
-      ];
+function getReverseTunnelDetail(state: ProxyState): string {
+  if (state === 'connected') {
+    return 'Tunnel is connected and forwarding traffic.';
+  }
+  if (state === 'starting') {
+    return 'Tunnel is starting and waiting for SSH readiness.';
+  }
+  if (state === 'failed') {
+    return 'Tunnel failed. Open logs or status for details.';
+  }
+  return 'Tunnel is stopped.';
+}
+
+function getReverseTunnelActions(): ToolBoxAction[] {
+  return [
+    {
+      id: 'toggle',
+      label: proxyState === 'connected' ? 'Stop Tunnel' : proxyState === 'starting' ? 'Connecting...' : 'Start Tunnel',
+      enabled: proxyState !== 'starting'
+    },
+    {
+      id: 'logs',
+      label: 'Open Logs',
+      enabled: true
+    },
+    {
+      id: 'proxySettings',
+      label: 'Settings',
+      enabled: true
     }
+  ];
+}
 
-    if (element.kind !== 'group') {
-      return [];
-    }
-
-    if (element.groupId === 'reverseTunnel') {
-      return this.buildReverseTunnelItems();
-    }
-
-    if (element.groupId === 'keyProjects') {
-      return this.buildKeyProjectItems();
-    }
-
-    return [];
+function getKeyProjectStateLabel(status: Pick<KeyProjectStatus, 'clean' | 'available'>): string {
+  if (!status.available) {
+    return 'unavailable';
   }
 
-  async getItemsForTest(): Promise<{ root: SidebarTestItem[]; children: SidebarTestItem[] }> {
-    const rootItems = await this.getChildren();
-    const root = rootItems.map((item) => this.mapItemForTest(item));
-    const childGroups = await Promise.all(
-      rootItems.map(async (item) => {
-        const children = await this.getChildren(item);
-        return children.map((child) => this.mapItemForTest(child, String(item.label ?? '')));
-      })
-    );
+  return status.clean ? 'clean' : 'dirty';
+}
 
-    return {
-      root,
-      children: childGroups.flat()
-    };
-  }
+async function getKeyProjectsViewModel(): Promise<KeyProjectsViewModel> {
+  const config = await getKeyProjectsConfig();
+  const issue = getKeyProjectsConfigurationIssue(config);
+  const cached = issue ? null : getCachedKeyProjectStatuses(config);
 
-  private createGroupItem(groupId: SidebarGroupId, label: string): SidebarItem {
-    const item = new SidebarItem('group', label, vscode.TreeItemCollapsibleState.Expanded, groupId);
-    item.iconPath = new vscode.ThemeIcon('symbol-namespace');
-    return item;
-  }
+  return {
+    issue,
+    configLoaded: Boolean(cached),
+    refreshing: Boolean(keyProjectsRefreshPromise),
+    rows: (cached ?? []).map((status) => ({
+      configuredRepoName: status.configuredRepoName,
+      repoName: status.repoName,
+      branch: status.available ? status.branch : 'unavailable',
+      remoteLabel: status.available ? getKeyProjectSyncLabel(status) : 'unavailable',
+      stateLabel: getKeyProjectStateLabel(status),
+      clean: status.clean,
+      available: status.available
+    }))
+  };
+}
 
-  private mapItemForTest(item: vscode.TreeItem, parentLabel?: string): SidebarTestItem {
-    const command =
-      item.command && typeof item.command === 'object' && 'command' in item.command
-        ? item.command.command
-        : undefined;
-    const tooltip = typeof item.tooltip === 'string' ? item.tooltip : item.tooltip?.value;
+async function getToolBoxViewModel(): Promise<ToolBoxViewModel> {
+  return {
+    reverseTunnel: {
+      stateLabel: getStateLabel(proxyState),
+      detail: getReverseTunnelDetail(proxyState),
+      tone: getReverseTunnelTone(proxyState),
+      actions: getReverseTunnelActions()
+    },
+    keyProjects: await getKeyProjectsViewModel()
+  };
+}
 
-    return {
-      kind: item instanceof SidebarItem ? item.kind : 'unknown',
-      label: String(item.label ?? ''),
-      description: typeof item.description === 'string' ? item.description : undefined,
-      tooltip,
-      command,
-      enabled: Boolean(command),
-      parentLabel
-    };
-  }
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
 
-  private buildReverseTunnelItems(): SidebarItem[] {
-    const toggle = new SidebarItem(
-      'action',
-      proxyState === 'connected'
-        ? 'ReverseTun: ON'
-        : proxyState === 'starting'
-          ? 'ReverseTun: CONNECTING...'
-          : 'ReverseTun: OFF',
-      vscode.TreeItemCollapsibleState.None,
-      'reverseTunnel'
-    );
+function createNonce(): string {
+  return Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
+}
 
-    const logs = new SidebarItem('action', 'Open Logs', vscode.TreeItemCollapsibleState.None, 'reverseTunnel');
-    logs.iconPath = new vscode.ThemeIcon('output');
-    logs.command = { command: 'reverseProxy.showLogs', title: 'Open Logs' };
-    const settings = new SidebarItem('action', 'Settings', vscode.TreeItemCollapsibleState.None, 'reverseTunnel');
-    settings.iconPath = new vscode.ThemeIcon('gear');
-    settings.command = { command: 'reverseProxy.openSettings', title: 'Settings' };
-
-    if (proxyState === 'connected') {
-      toggle.iconPath = new vscode.ThemeIcon('circle-filled', new vscode.ThemeColor('charts.green'));
-      toggle.command = { command: 'reverseProxy.sidebarToggle', title: 'Toggle Proxy' };
-      return [toggle, logs, settings];
-    }
-
-    if (proxyState === 'starting') {
-      toggle.iconPath = new vscode.ThemeIcon('sync~spin');
-      return [toggle, logs, settings];
-    }
-
-    toggle.iconPath = new vscode.ThemeIcon('circle-large-outline', new vscode.ThemeColor('disabledForeground'));
-    toggle.command = { command: 'reverseProxy.sidebarToggle', title: 'Toggle Proxy' };
-    return [toggle, logs, settings];
-  }
-
-  private async buildKeyProjectItems(): Promise<SidebarItem[]> {
-    const config = await getKeyProjectsConfig();
-    const issue = getKeyProjectsConfigurationIssue(config);
-    const items: SidebarItem[] = [];
-
-    if (issue) {
-      const info = new SidebarItem('info', issue, vscode.TreeItemCollapsibleState.None, 'keyProjects');
-      info.tooltip = issue;
-      items.push(info);
-    } else {
-      const cached = getCachedKeyProjectStatuses(config);
-      if (cached) {
-        for (const status of cached) {
-          items.push(this.createKeyProjectItem(status));
-        }
-      } else {
-        const info = new SidebarItem('info', 'Click Refresh to load key project status.', vscode.TreeItemCollapsibleState.None, 'keyProjects');
-        info.tooltip = 'Click Refresh to load key project status.';
-        items.push(info);
+function renderToolBoxWebview(webview: vscode.Webview, model: ToolBoxViewModel): string {
+  const nonce = createNonce();
+  const reverseActions = model.reverseTunnel.actions
+    .map((action) => {
+      const classes = ['action'];
+      if (action.id === 'toggle') {
+        classes.push('primary');
       }
-    }
+      return '<button class="' + classes.join(' ') + '" data-action="' + escapeHtml(action.id) + '" ' + (action.enabled ? '' : 'disabled') + '>' + escapeHtml(action.label) + '</button>';
+    })
+    .join('');
 
-    const refreshing = Boolean(keyProjectsRefreshPromise);
-    const refresh = new SidebarItem(
-      'action',
-      refreshing ? 'Refreshing...' : 'Refresh',
-      vscode.TreeItemCollapsibleState.None,
-      'keyProjects'
-    );
-    refresh.iconPath = new vscode.ThemeIcon(refreshing ? 'sync~spin' : 'refresh');
-    if (!refreshing) {
-      refresh.command = { command: 'reverseProxy.refreshKeyProjects', title: 'Refresh Key Projects' };
-    }
-    items.push(refresh);
+  const keyRows = model.keyProjects.rows
+    .map((row) => {
+      const stateTone = row.available ? (row.clean ? 'clean' : 'dirty') : 'unavailable';
+      return [
+        '<button class="table-row" data-repo="' + escapeHtml(row.configuredRepoName) + '">',
+        '  <span class="cell state"><span class="dot ' + stateTone + '"></span>' + escapeHtml(row.stateLabel) + '</span>',
+        '  <span class="cell repo">' + escapeHtml(row.repoName) + '</span>',
+        '  <span class="cell branch">' + escapeHtml(row.branch) + '</span>',
+        '  <span class="cell remote">' + escapeHtml(row.remoteLabel) + '</span>',
+        '</button>'
+      ].join('');
+    })
+    .join('');
 
-    const settings = new SidebarItem('action', 'Settings', vscode.TreeItemCollapsibleState.None, 'keyProjects');
-    settings.iconPath = new vscode.ThemeIcon('gear');
-    settings.command = { command: 'reverseProxy.openKeyProjectSettings', title: 'Settings' };
-    items.push(settings);
-
-    return items;
+  let keyBody = '';
+  if (model.keyProjects.issue) {
+    keyBody = '<div class="empty">' + escapeHtml(model.keyProjects.issue) + '</div>';
+  } else if (!model.keyProjects.configLoaded && !model.keyProjects.refreshing) {
+    keyBody = '<div class="empty">Click Refresh to load key project status.</div>';
+  } else if (!model.keyProjects.rows.length && model.keyProjects.refreshing) {
+    keyBody = '<div class="empty">Refreshing key projects...</div>';
+  } else if (!model.keyProjects.rows.length) {
+    keyBody = '<div class="empty">No key projects configured.</div>';
+  } else {
+    keyBody = [
+      '<div class="table-header">',
+      '  <span class="cell state">State</span>',
+      '  <span class="cell repo">Repo</span>',
+      '  <span class="cell branch">Branch</span>',
+      '  <span class="cell remote">Remote</span>',
+      '</div>',
+      '<div class="table-rows">' + keyRows + '</div>'
+    ].join('');
   }
 
-  private createKeyProjectItem(status: KeyProjectStatus): SidebarItem {
-    const label = status.clean
-      ? `\u2714\uFE0F ${status.repoName}: ${status.branch} - ${getKeyProjectSyncLabel(status)}`
-      : `\u2757 ${status.repoName}: ${status.branch} - ${getKeyProjectSyncLabel(status)}`;
-    const unavailableLabel = `\u26A0 ${status.repoName}: unavailable`;
-    const item = new SidebarItem(
-      'project',
-      status.available ? label : unavailableLabel,
-      vscode.TreeItemCollapsibleState.None,
-      'keyProjects',
-      status.repoName
-    );
-    item.tooltip = formatKeyProjectTooltip(status);
-    item.command = {
-      command: 'reverseProxy.showKeyProjectStatus',
-      title: 'Show Key Project Status',
-      arguments: [status.configuredRepoName]
-    };
-    return item;
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}';" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <style>
+    body {
+      margin: 0;
+      padding: 12px;
+      font-family: var(--vscode-font-family);
+      font-size: 12px;
+      color: var(--vscode-foreground);
+      background: var(--vscode-sideBar-background);
+    }
+    .stack {
+      display: grid;
+      gap: 10px;
+    }
+    .panel {
+      border: 1px solid var(--vscode-panel-border);
+      border-radius: 10px;
+      overflow: hidden;
+      background: color-mix(in srgb, var(--vscode-editor-background) 86%, transparent);
+    }
+    .panel-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 12px 12px 10px;
+      border-bottom: 1px solid color-mix(in srgb, var(--vscode-panel-border) 70%, transparent);
+    }
+    .panel-title {
+      display: grid;
+      gap: 4px;
+      min-width: 0;
+    }
+    .eyebrow {
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--vscode-descriptionForeground);
+    }
+    .headline {
+      font-size: 14px;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .subline {
+      color: var(--vscode-descriptionForeground);
+      line-height: 1.4;
+    }
+    .tone {
+      width: 9px;
+      height: 9px;
+      border-radius: 999px;
+      background: var(--vscode-disabledForeground);
+      flex: 0 0 auto;
+    }
+    .tone.connected, .dot.clean { background: var(--vscode-testing-iconPassed); }
+    .tone.starting { background: var(--vscode-testing-iconQueued); }
+    .tone.failed, .dot.dirty { background: var(--vscode-testing-iconFailed); }
+    .tone.stopped, .dot.unavailable { background: var(--vscode-disabledForeground); }
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      padding: 0 12px 12px;
+    }
+    button.action {
+      border: 1px solid var(--vscode-button-border, transparent);
+      background: var(--vscode-button-secondaryBackground, var(--vscode-button-background));
+      color: var(--vscode-button-secondaryForeground, var(--vscode-button-foreground));
+      border-radius: 6px;
+      padding: 6px 10px;
+      cursor: pointer;
+    }
+    button.action.primary {
+      background: var(--vscode-button-background);
+      color: var(--vscode-button-foreground);
+    }
+    button.action:disabled {
+      cursor: default;
+      opacity: 0.6;
+    }
+    .key-toolbar {
+      display: flex;
+      gap: 8px;
+      padding: 0 12px 12px;
+    }
+    .key-toolbar button {
+      border: 1px solid var(--vscode-button-border, transparent);
+      background: var(--vscode-button-background);
+      color: var(--vscode-button-foreground);
+      border-radius: 6px;
+      padding: 6px 10px;
+      cursor: pointer;
+    }
+    .key-toolbar button.secondary {
+      background: var(--vscode-button-secondaryBackground, var(--vscode-dropdown-background));
+      color: var(--vscode-button-secondaryForeground, var(--vscode-dropdown-foreground));
+    }
+    .key-toolbar button:disabled {
+      cursor: default;
+      opacity: 0.6;
+    }
+    .key-body {
+      padding: 0 12px 12px;
+    }
+    .table-header, .table-row {
+      width: 100%;
+      display: grid;
+      grid-template-columns: minmax(84px, 0.85fr) minmax(138px, 1.7fr) minmax(90px, 1fr) minmax(108px, 1.1fr);
+      gap: 10px;
+      align-items: center;
+      box-sizing: border-box;
+      padding: 9px 10px;
+    }
+    .table-header {
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--vscode-descriptionForeground);
+      border-bottom: 1px solid var(--vscode-panel-border);
+    }
+    .table-row {
+      border: 0;
+      border-top: 1px solid color-mix(in srgb, var(--vscode-panel-border) 70%, transparent);
+      background: transparent;
+      color: inherit;
+      text-align: left;
+      cursor: pointer;
+    }
+    .table-row:first-child { border-top: 0; }
+    .table-row:hover { background: color-mix(in srgb, var(--vscode-list-hoverBackground) 88%, transparent); }
+    .cell {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .state {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      text-transform: capitalize;
+    }
+    .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 999px;
+      flex: 0 0 auto;
+    }
+    .empty {
+      border: 1px dashed var(--vscode-panel-border);
+      border-radius: 8px;
+      padding: 12px;
+      color: var(--vscode-descriptionForeground);
+      line-height: 1.45;
+    }
+  </style>
+</head>
+<body>
+  <div class="stack">
+    <section class="panel reverse-panel">
+      <div class="panel-head">
+        <div class="panel-title">
+          <div class="eyebrow">Reverse Tunnel</div>
+          <div class="headline"><span class="tone ${model.reverseTunnel.tone}"></span>${escapeHtml(model.reverseTunnel.stateLabel)}</div>
+          <div class="subline">${escapeHtml(model.reverseTunnel.detail)}</div>
+        </div>
+      </div>
+      <div class="actions">${reverseActions}</div>
+    </section>
+    <section class="panel key-panel">
+      <div class="panel-head">
+        <div class="panel-title">
+          <div class="eyebrow">Key Projects</div>
+          <div class="headline"><span class="tone ${model.keyProjects.refreshing ? 'starting' : 'connected'}"></span>${model.keyProjects.refreshing ? 'Refreshing' : 'Repository Status'}</div>
+          <div class="subline">Track branch cleanliness and remote sync at a glance.</div>
+        </div>
+      </div>
+      <div class="key-toolbar">
+        <button id="refresh" ${model.keyProjects.refreshing ? 'disabled' : ''}>${model.keyProjects.refreshing ? 'Refreshing...' : 'Refresh'}</button>
+        <button id="key-settings" class="secondary">Settings</button>
+      </div>
+      <div class="key-body">${keyBody}</div>
+    </section>
+  </div>
+  <script nonce="${nonce}">
+    const vscode = acquireVsCodeApi();
+    document.querySelectorAll('button.action[data-action]').forEach((button) => {
+      button.addEventListener('click', () => {
+        const action = button.getAttribute('data-action');
+        if (action) {
+          vscode.postMessage({ type: 'action', action });
+        }
+      });
+    });
+    document.getElementById('refresh')?.addEventListener('click', () => {
+      vscode.postMessage({ type: 'action', action: 'keyRefresh' });
+    });
+    document.getElementById('key-settings')?.addEventListener('click', () => {
+      vscode.postMessage({ type: 'action', action: 'keySettings' });
+    });
+    document.querySelectorAll('.table-row').forEach((row) => {
+      row.addEventListener('click', () => {
+        const repoName = row.getAttribute('data-repo');
+        if (repoName) {
+          vscode.postMessage({ type: 'showStatus', repoName });
+        }
+      });
+    });
+  </script>
+</body>
+</html>`;
+}
+
+class ToolBoxWebviewProvider implements vscode.WebviewViewProvider {
+  static readonly viewType = 'reverseProxy.sidebarView';
+  private view: vscode.WebviewView | null = null;
+
+  async resolveWebviewView(webviewView: vscode.WebviewView): Promise<void> {
+    this.view = webviewView;
+    webviewView.webview.options = { enableScripts: true };
+    webviewView.onDidDispose(() => {
+      if (this.view === webviewView) {
+        this.view = null;
+      }
+    });
+    webviewView.webview.onDidReceiveMessage(async (message: { type?: string; repoName?: string; action?: string }) => {
+      if (message.type === 'showStatus' && message.repoName) {
+        await showKeyProjectStatus(message.repoName);
+        return;
+      }
+      if (message.type !== 'action' || !message.action) {
+        return;
+      }
+      switch (message.action) {
+        case 'toggle':
+          await toggleProxyFromSidebar();
+          return;
+        case 'logs':
+          showLogs();
+          return;
+        case 'proxySettings':
+          await openSettingsConfig();
+          return;
+        case 'keyRefresh':
+          await refreshKeyProjects();
+          return;
+        case 'keySettings':
+          await openKeyProjectsSettings();
+          return;
+        default:
+          return;
+      }
+    });
+    await this.refresh();
+  }
+
+  async refresh(): Promise<void> {
+    if (!this.view) {
+      return;
+    }
+
+    const model = await getToolBoxViewModel();
+    this.view.webview.html = renderToolBoxWebview(this.view.webview, model);
   }
 }
+
 
 function setProxyState(state: ProxyState): void {
   proxyState = state;
@@ -317,9 +584,112 @@ function setProxyState(state: ProxyState): void {
     statusBarItem.tooltip = 'SSH reverse proxy is stopped. Click to view status.';
   }
 
-  sidebarViewProvider?.refresh();
+  void toolBoxWebviewProvider?.refresh();
 }
 
+function getReverseTunnelSidebarItemsForTest(): SidebarTestItem[] {
+  const toggleLabel = proxyState === 'connected'
+    ? 'ReverseTun: ON'
+    : proxyState === 'starting'
+      ? 'ReverseTun: CONNECTING...'
+      : 'ReverseTun: OFF';
+  const toggleCommand = proxyState === 'starting' ? undefined : 'reverseProxy.sidebarToggle';
+
+  return [
+    {
+      kind: 'action',
+      label: toggleLabel,
+      command: toggleCommand,
+      enabled: Boolean(toggleCommand),
+      parentLabel: 'ReverseTunnel'
+    },
+    {
+      kind: 'action',
+      label: 'Open Logs',
+      command: 'reverseProxy.showLogs',
+      enabled: true,
+      parentLabel: 'ReverseTunnel'
+    },
+    {
+      kind: 'action',
+      label: 'Settings',
+      command: 'reverseProxy.openSettings',
+      enabled: true,
+      parentLabel: 'ReverseTunnel'
+    }
+  ];
+}
+
+async function getKeyProjectSidebarItemsForTest(): Promise<SidebarTestItem[]> {
+  const config = await getKeyProjectsConfig();
+  const issue = getKeyProjectsConfigurationIssue(config);
+  const items: SidebarTestItem[] = [];
+
+  if (issue) {
+    items.push({
+      kind: 'info',
+      label: issue,
+      tooltip: issue,
+      enabled: false,
+      parentLabel: 'Key Projects'
+    });
+  } else {
+    const cached = getCachedKeyProjectStatuses(config);
+    if (cached) {
+      for (const status of cached) {
+        const label = status.available
+          ? (status.clean
+              ? `\u2714\uFE0F ${status.repoName}: ${status.branch} - ${getKeyProjectSyncLabel(status)}`
+              : `\u2757 ${status.repoName}: ${status.branch} - ${getKeyProjectSyncLabel(status)}`)
+          : `\u26A0 ${status.repoName}: unavailable`;
+        items.push({
+          kind: 'project',
+          label,
+          tooltip: formatKeyProjectTooltip(status).value,
+          command: 'reverseProxy.showKeyProjectStatus',
+          arguments: [status.configuredRepoName],
+          enabled: true,
+          parentLabel: 'Key Projects'
+        });
+      }
+    } else {
+      items.push({
+        kind: 'info',
+        label: 'Click Refresh to load key project status.',
+        tooltip: 'Click Refresh to load key project status.',
+        enabled: false,
+        parentLabel: 'Key Projects'
+      });
+    }
+  }
+
+  items.push({
+    kind: 'action',
+    label: keyProjectsRefreshPromise ? 'Refreshing...' : 'Refresh',
+    command: keyProjectsRefreshPromise ? undefined : 'reverseProxy.refreshKeyProjects',
+    enabled: !keyProjectsRefreshPromise,
+    parentLabel: 'Key Projects'
+  });
+  items.push({
+    kind: 'action',
+    label: 'Settings',
+    command: 'reverseProxy.openKeyProjectSettings',
+    enabled: true,
+    parentLabel: 'Key Projects'
+  });
+
+  return items;
+}
+
+async function getSidebarItemsForTest(): Promise<{ root: SidebarTestItem[]; children: SidebarTestItem[] }> {
+  return {
+    root: [
+      { kind: 'group', label: 'ReverseTunnel', enabled: false },
+      { kind: 'group', label: 'Key Projects', enabled: false }
+    ],
+    children: [...getReverseTunnelSidebarItemsForTest(), ...(await getKeyProjectSidebarItemsForTest())]
+  };
+}
 
 async function updateKeyStatusBar(): Promise<void> {
   if (!keyStatusBarItem) {
@@ -827,7 +1197,8 @@ async function refreshKeyProjects(): Promise<void> {
     if (issue) {
       outputChannel?.appendLine(`[key-projects] refresh skipped: ${issue}`);
       invalidateKeyProjectsCache('configuration issue');
-      sidebarViewProvider?.refresh();
+      void toolBoxWebviewProvider?.refresh();
+    
       await updateKeyStatusBar();
       return;
     }
@@ -835,18 +1206,21 @@ async function refreshKeyProjects(): Promise<void> {
     const statuses = await loadKeyProjectStatuses(config);
     setCachedKeyProjectStatuses(config, statuses);
     outputChannel?.appendLine(`[key-projects] refresh complete count=${statuses.length}`);
-    sidebarViewProvider?.refresh();
+    void toolBoxWebviewProvider?.refresh();
+  
     await updateKeyStatusBar();
   })();
 
-  sidebarViewProvider?.refresh();
+  void toolBoxWebviewProvider?.refresh();
+
   void updateKeyStatusBar();
 
   try {
     await keyProjectsRefreshPromise;
   } finally {
     keyProjectsRefreshPromise = null;
-    sidebarViewProvider?.refresh();
+    void toolBoxWebviewProvider?.refresh();
+  
     await updateKeyStatusBar();
   }
 }
@@ -1555,7 +1929,7 @@ export function activate(context: vscode.ExtensionContext): void {
   statusBarItem.command = 'reverseProxy.showStatus';
   setProxyState('stopped');
   statusBarItem.show();
-  sidebarViewProvider = new ProxySidebarProvider();
+  toolBoxWebviewProvider = new ToolBoxWebviewProvider();
 
   if (vscode.env.remoteName) {
     outputChannel.appendLine(`[mode] remote workspace detected (${vscode.env.remoteName}); extension runs on local UI host.`);
@@ -1568,29 +1942,32 @@ export function activate(context: vscode.ExtensionContext): void {
     const watcher = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(folder, '.vscode/mytoolbox.json'));
     watcher.onDidChange(() => {
       invalidateKeyProjectsCache('config file changed');
-      sidebarViewProvider?.refresh();
+      void toolBoxWebviewProvider?.refresh();
+    
       void updateKeyStatusBar();
     });
     watcher.onDidCreate(() => {
       invalidateKeyProjectsCache('config file created');
-      sidebarViewProvider?.refresh();
+      void toolBoxWebviewProvider?.refresh();
+    
       void updateKeyStatusBar();
     });
     watcher.onDidDelete(() => {
       invalidateKeyProjectsCache('config file deleted');
-      sidebarViewProvider?.refresh();
+      void toolBoxWebviewProvider?.refresh();
+    
       void updateKeyStatusBar();
     });
     return watcher;
   });
 
-  sidebarTreeView = vscode.window.createTreeView('reverseProxy.sidebarView', { treeDataProvider: sidebarViewProvider });
+  const toolBoxWebviewRegistration = vscode.window.registerWebviewViewProvider(ToolBoxWebviewProvider.viewType, toolBoxWebviewProvider);
 
   context.subscriptions.push(
     outputChannel,
     keyStatusBarItem,
     statusBarItem,
-    sidebarTreeView,
+    toolBoxWebviewRegistration,
     ...keyProjectsWatchers,
     vscode.workspace.onDidChangeConfiguration((event) => {
       if (event.affectsConfiguration('reverseProxy.configFile')) {
@@ -1598,7 +1975,8 @@ export function activate(context: vscode.ExtensionContext): void {
   void updateKeyStatusBar();
       }
       if (event.affectsConfiguration('reverseProxy')) {
-        sidebarViewProvider?.refresh();
+        void toolBoxWebviewProvider?.refresh();
+      
       }
       void updateKeyStatusBar();
     })
@@ -1659,13 +2037,23 @@ export function activate(context: vscode.ExtensionContext): void {
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand('reverseProxy.test.getSidebarItems', async () => {
-      if (!sidebarViewProvider) {
-        return [];
-      }
-      return sidebarViewProvider.getItemsForTest();
+    vscode.commands.registerCommand('reverseProxy.test.getToolBoxViewState', async () => {
+      return getToolBoxViewModel();
     })
   );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('reverseProxy.test.getSidebarItems', async () => {
+      return getSidebarItemsForTest();
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('reverseProxy.test.getKeyProjectsViewState', async () => {
+      return getKeyProjectsViewModel();
+    })
+  );
+
 
   context.subscriptions.push(
     vscode.commands.registerCommand('reverseProxy.test.resolvePaths', (args: ResolvePathOptions & { configFile: string }) => {
@@ -1688,23 +2076,13 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand(
       'reverseProxy.test.clickSidebarItem',
       async (args: string | { label: string; parentLabel?: string }) => {
-        if (!sidebarViewProvider) {
-          throw new Error('Sidebar provider is not initialized.');
-        }
         const request = typeof args === 'string' ? { label: args } : args;
-        const roots = await sidebarViewProvider.getChildren();
-        const children = (
-          await Promise.all(
-            roots
-              .filter((root) => !request.parentLabel || String(root.label ?? '') === request.parentLabel)
-              .map((root) => sidebarViewProvider!.getChildren(root))
-          )
-        ).flat();
-        const item = children.find((entry) => String(entry.label ?? '') === request.label);
+        const snapshot = await getSidebarItemsForTest();
+        const item = snapshot.children.find((entry) => entry.label === request.label && (!request.parentLabel || entry.parentLabel === request.parentLabel));
         if (!item || !item.command) {
-          throw new Error(`Sidebar item '${request.label}' is not clickable.`);
+          throw new Error('Sidebar item ' + request.label + ' is not clickable.');
         }
-        return vscode.commands.executeCommand(item.command.command, ...(item.command.arguments ?? []));
+        return vscode.commands.executeCommand(item.command, ...(item.arguments ?? []));
       }
     )
   );
@@ -1761,7 +2139,8 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     vscode.commands.registerCommand('reverseProxy.test.setKeyProjectsWorkspaceOverride', async (workspacePath?: string | null) => {
       keyProjectsWorkspaceOverride = workspacePath ?? null;
-      sidebarViewProvider?.refresh();
+      void toolBoxWebviewProvider?.refresh();
+    
       return keyProjectsWorkspaceOverride;
     })
   );
@@ -1774,8 +2153,7 @@ export function activate(context: vscode.ExtensionContext): void {
 }
 
 export function deactivate(): void {
-  sidebarTreeView = null;
-  sidebarViewProvider = null;
+  toolBoxWebviewProvider = null;
   externalTunnelPid = null;
   if (keyStatusBarItem) {
     keyStatusBarItem.dispose();
