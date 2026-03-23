@@ -280,9 +280,9 @@ class ProxySidebarProvider implements vscode.TreeDataProvider<SidebarItem> {
 
   private createKeyProjectItem(status: KeyProjectStatus): SidebarItem {
     const label = status.clean
-      ? `Clean ${status.repoName}: ${status.branch} - ${getKeyProjectSyncLabel(status)}`
-      : `Dirty ${status.repoName}: ${status.branch} - ${getKeyProjectSyncLabel(status)}`;
-    const unavailableLabel = `Unavailable ${status.repoName}: unavailable`;
+      ? `\u2714\uFE0F ${status.repoName}: ${status.branch} - ${getKeyProjectSyncLabel(status)}`
+      : `\u2757 ${status.repoName}: ${status.branch} - ${getKeyProjectSyncLabel(status)}`;
+    const unavailableLabel = `\u26A0 ${status.repoName}: unavailable`;
     const item = new SidebarItem(
       'project',
       status.available ? label : unavailableLabel,

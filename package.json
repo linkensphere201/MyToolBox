@@ -20,7 +20,9 @@
     "onCommand:reverseProxy.showLogs",
     "onCommand:reverseProxy.openSettings",
     "onCommand:reverseProxy.sidebarToggle",
-    "onView:reverseProxy.sidebarView"
+    "onView:reverseProxy.sidebarView",
+    "onCommand:reverseProxy.openKeyProjectSettings",
+    "onCommand:reverseProxy.refreshKeyProjects"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -48,6 +50,14 @@
       {
         "command": "reverseProxy.sidebarToggle",
         "title": "Reverse Proxy: Toggle From Sidebar"
+      },
+      {
+        "command": "reverseProxy.refreshKeyProjects",
+        "title": "ToolBox: Refresh Key Projects"
+      },
+      {
+        "command": "reverseProxy.openKeyProjectSettings",
+        "title": "ToolBox: Key Projects Settings"
       }
     ],
     "viewsContainers": {
