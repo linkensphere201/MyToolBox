@@ -8,10 +8,15 @@ let sshProcess: ChildProcessWithoutNullStreams | null = null;
 let externalTunnelPid: number | null = null;
 let outputChannel: vscode.OutputChannel;
 let statusBarItem: vscode.StatusBarItem;
+let keyStatusBarItem: vscode.StatusBarItem;
 let connectTimer: NodeJS.Timeout | null = null;
 let stopRequested = false;
 let extensionContextRef: vscode.ExtensionContext | null = null;
 let sidebarViewProvider: ProxySidebarProvider | null = null;
+let sidebarTreeView: vscode.TreeView<SidebarItem> | null = null;
+let keyProjectsWorkspaceOverride: string | null = null;
+let keyProjectsCache: KeyProjectsCache | null = null;
+let keyProjectsRefreshPromise: Promise<void> | null = null;
 
 type ProxyState = 'stopped' | 'starting' | 'connected' | 'failed';
 let proxyState: ProxyState = 'stopped';
@@ -44,6 +49,67 @@ type ResolvePathOptions = {
   extensionPath?: string;
 };
 
+type KeyProjectsMode = 'local' | 'ssh';
+
+type KeyProjectsConfig = {
+  mode: KeyProjectsMode;
+  rootDir: string;
+  repoNames: string[];
+  sshTarget: string;
+  sshPort: number;
+  gitPath: string;
+  sshPath: string;
+  loadedConfigPath: string;
+  configExists: boolean;
+  workspaceAvailable: boolean;
+};
+
+type KeyProjectStatus = {
+  configuredRepoName: string;
+  repoName: string;
+  repoPath: string;
+  branch: string;
+  upstream?: string;
+  syncState: 'synced' | 'ahead' | 'behind' | 'diverged' | 'no-upstream' | 'unknown';
+  aheadCount: number;
+  behindCount: number;
+  shortStatus: string;
+  fullStatus?: string;
+  clean: boolean;
+  available: boolean;
+  error?: string;
+  fetchError?: string;
+};
+
+type KeyProjectsCache = {
+  signature: string;
+  statuses: KeyProjectStatus[];
+};
+
+type SidebarGroupId = 'reverseTunnel' | 'keyProjects';
+
+type SidebarTestItem = {
+  kind: string;
+  label: string;
+  description?: string;
+  tooltip?: string;
+  command?: string;
+  enabled: boolean;
+  parentLabel?: string;
+};
+
+class SidebarItem extends vscode.TreeItem {
+  constructor(
+    public readonly kind: 'group' | 'action' | 'project' | 'info',
+    label: string,
+    collapsibleState: vscode.TreeItemCollapsibleState,
+    public readonly groupId?: SidebarGroupId,
+    public readonly repoName?: string
+  ) {
+    super(label, collapsibleState);
+  }
+}
+
 function getStateLabel(state: ProxyState): string {
   if (state === 'starting') {
     return 'Starting';
@@ -57,8 +123,9 @@ function getStateLabel(state: ProxyState): string {
   return 'Stopped';
 }
 
-class ProxySidebarProvider implements vscode.TreeDataProvider<vscode.TreeItem> {
-  private static readonly groupLabel = 'ReverseTunnel';
+class ProxySidebarProvider implements vscode.TreeDataProvider<SidebarItem> {
+  static readonly reverseTunnelGroupLabel = 'ReverseTunnel';
+  static readonly keyProjectsGroupLabel = 'Key Projects';
   private readonly onDidChangeTreeDataEmitter = new vscode.EventEmitter<void>();
   readonly onDidChangeTreeData = this.onDidChangeTreeDataEmitter.event;
 
@@ -66,61 +133,89 @@ class ProxySidebarProvider implements vscode.TreeDataProvider<vscode.TreeItem> {
     this.onDidChangeTreeDataEmitter.fire();
   }
 
-  getTreeItem(element: vscode.TreeItem): vscode.TreeItem {
+  getTreeItem(element: SidebarItem): vscode.TreeItem {
     return element;
   }
 
-  getChildren(element?: vscode.TreeItem): vscode.ProviderResult<vscode.TreeItem[]> {
+  async getChildren(element?: SidebarItem): Promise<SidebarItem[]> {
     if (!element) {
-      const group = new vscode.TreeItem(ProxySidebarProvider.groupLabel, vscode.TreeItemCollapsibleState.Expanded);
-      group.iconPath = new vscode.ThemeIcon('symbol-namespace');
-      return [group];
+      return [
+        this.createGroupItem('reverseTunnel', ProxySidebarProvider.reverseTunnelGroupLabel),
+        this.createGroupItem('keyProjects', ProxySidebarProvider.keyProjectsGroupLabel)
+      ];
     }
 
-    if (String(element.label) !== ProxySidebarProvider.groupLabel) {
+    if (element.kind !== 'group') {
       return [];
     }
 
-    return this.buildItems();
+    if (element.groupId === 'reverseTunnel') {
+      return this.buildReverseTunnelItems();
+    }
+
+    if (element.groupId === 'keyProjects') {
+      return this.buildKeyProjectItems();
+    }
+
+    return [];
   }
 
-  getItemsForTest(): {
-    root: Array<{ label: string; command?: string; enabled: boolean }>;
-    children: Array<{ label: string; command?: string; enabled: boolean }>;
-  } {
-    const mapItem = (item: vscode.TreeItem) => {
-      const command =
-        item.command && typeof item.command === 'object' && 'command' in item.command
-          ? item.command.command
-          : undefined;
-      return {
-        label: String(item.label ?? ''),
-        command,
-        enabled: Boolean(command)
-      };
+  async getItemsForTest(): Promise<{ root: SidebarTestItem[]; children: SidebarTestItem[] }> {
+    const rootItems = await this.getChildren();
+    const root = rootItems.map((item) => this.mapItemForTest(item));
+    const childGroups = await Promise.all(
+      rootItems.map(async (item) => {
+        const children = await this.getChildren(item);
+        return children.map((child) => this.mapItemForTest(child, String(item.label ?? '')));
+      })
+    );
+
+    return {
+      root,
+      children: childGroups.flat()
     };
-
-    const root = [
-      new vscode.TreeItem(ProxySidebarProvider.groupLabel, vscode.TreeItemCollapsibleState.Expanded)
-    ].map((item) => mapItem(item));
-    const children = this.buildItems().map((item) => mapItem(item));
-    return { root, children };
   }
 
-  private buildItems(): vscode.TreeItem[] {
-    const toggle = new vscode.TreeItem(
+  private createGroupItem(groupId: SidebarGroupId, label: string): SidebarItem {
+    const item = new SidebarItem('group', label, vscode.TreeItemCollapsibleState.Expanded, groupId);
+    item.iconPath = new vscode.ThemeIcon('symbol-namespace');
+    return item;
+  }
+
+  private mapItemForTest(item: vscode.TreeItem, parentLabel?: string): SidebarTestItem {
+    const command =
+      item.command && typeof item.command === 'object' && 'command' in item.command
+        ? item.command.command
+        : undefined;
+    const tooltip = typeof item.tooltip === 'string' ? item.tooltip : item.tooltip?.value;
+
+    return {
+      kind: item instanceof SidebarItem ? item.kind : 'unknown',
+      label: String(item.label ?? ''),
+      description: typeof item.description === 'string' ? item.description : undefined,
+      tooltip,
+      command,
+      enabled: Boolean(command),
+      parentLabel
+    };
+  }
+
+  private buildReverseTunnelItems(): SidebarItem[] {
+    const toggle = new SidebarItem(
+      'action',
       proxyState === 'connected'
         ? 'ReverseTun: ON'
         : proxyState === 'starting'
           ? 'ReverseTun: CONNECTING...'
           : 'ReverseTun: OFF',
-      vscode.TreeItemCollapsibleState.None
+      vscode.TreeItemCollapsibleState.None,
+      'reverseTunnel'
     );
 
-    const logs = new vscode.TreeItem('Open Logs', vscode.TreeItemCollapsibleState.None);
+    const logs = new SidebarItem('action', 'Open Logs', vscode.TreeItemCollapsibleState.None, 'reverseTunnel');
     logs.iconPath = new vscode.ThemeIcon('output');
     logs.command = { command: 'reverseProxy.showLogs', title: 'Open Logs' };
-    const settings = new vscode.TreeItem('Settings', vscode.TreeItemCollapsibleState.None);
+    const settings = new SidebarItem('action', 'Settings', vscode.TreeItemCollapsibleState.None, 'reverseTunnel');
     settings.iconPath = new vscode.ThemeIcon('gear');
     settings.command = { command: 'reverseProxy.openSettings', title: 'Settings' };
 
@@ -138,6 +233,70 @@ class ProxySidebarProvider implements vscode.TreeDataProvider<vscode.TreeItem> {
     toggle.iconPath = new vscode.ThemeIcon('circle-large-outline', new vscode.ThemeColor('disabledForeground'));
     toggle.command = { command: 'reverseProxy.sidebarToggle', title: 'Toggle Proxy' };
     return [toggle, logs, settings];
+  }
+
+  private async buildKeyProjectItems(): Promise<SidebarItem[]> {
+    const config = await getKeyProjectsConfig();
+    const issue = getKeyProjectsConfigurationIssue(config);
+    const items: SidebarItem[] = [];
+
+    if (issue) {
+      const info = new SidebarItem('info', issue, vscode.TreeItemCollapsibleState.None, 'keyProjects');
+      info.tooltip = issue;
+      items.push(info);
+    } else {
+      const cached = getCachedKeyProjectStatuses(config);
+      if (cached) {
+        for (const status of cached) {
+          items.push(this.createKeyProjectItem(status));
+        }
+      } else {
+        const info = new SidebarItem('info', 'Click Refresh to load key project status.', vscode.TreeItemCollapsibleState.None, 'keyProjects');
+        info.tooltip = 'Click Refresh to load key project status.';
+        items.push(info);
+      }
+    }
+
+    const refreshing = Boolean(keyProjectsRefreshPromise);
+    const refresh = new SidebarItem(
+      'action',
+      refreshing ? 'Refreshing...' : 'Refresh',
+      vscode.TreeItemCollapsibleState.None,
+      'keyProjects'
+    );
+    refresh.iconPath = new vscode.ThemeIcon(refreshing ? 'sync~spin' : 'refresh');
+    if (!refreshing) {
+      refresh.command = { command: 'reverseProxy.refreshKeyProjects', title: 'Refresh Key Projects' };
+    }
+    items.push(refresh);
+
+    const settings = new SidebarItem('action', 'Settings', vscode.TreeItemCollapsibleState.None, 'keyProjects');
+    settings.iconPath = new vscode.ThemeIcon('gear');
+    settings.command = { command: 'reverseProxy.openKeyProjectSettings', title: 'Settings' };
+    items.push(settings);
+
+    return items;
+  }
+
+  private createKeyProjectItem(status: KeyProjectStatus): SidebarItem {
+    const label = status.clean
+      ? `Clean ${status.repoName}: ${status.branch} - ${getKeyProjectSyncLabel(status)}`
+      : `Dirty ${status.repoName}: ${status.branch} - ${getKeyProjectSyncLabel(status)}`;
+    const unavailableLabel = `Unavailable ${status.repoName}: unavailable`;
+    const item = new SidebarItem(
+      'project',
+      status.available ? label : unavailableLabel,
+      vscode.TreeItemCollapsibleState.None,
+      'keyProjects',
+      status.repoName
+    );
+    item.tooltip = formatKeyProjectTooltip(status);
+    item.command = {
+      command: 'reverseProxy.showKeyProjectStatus',
+      title: 'Show Key Project Status',
+      arguments: [status.configuredRepoName]
+    };
+    return item;
   }
 }
 
@@ -161,6 +320,45 @@ function setProxyState(state: ProxyState): void {
   sidebarViewProvider?.refresh();
 }
 
+
+async function updateKeyStatusBar(): Promise<void> {
+  if (!keyStatusBarItem) {
+    return;
+  }
+
+  keyStatusBarItem.command = 'reverseProxy.refreshKeyProjects';
+
+  if (keyProjectsRefreshPromise) {
+    keyStatusBarItem.text = '$(sync~spin) $(bookmark) Refreshing...';
+    keyStatusBarItem.tooltip = 'Refreshing key project status.';
+    keyStatusBarItem.show();
+    return;
+  }
+
+  const config = await getKeyProjectsConfig();
+  const issue = getKeyProjectsConfigurationIssue(config);
+  if (issue) {
+    keyStatusBarItem.text = '$(bookmark) setup';
+    keyStatusBarItem.tooltip = issue;
+    keyStatusBarItem.command = 'reverseProxy.openKeyProjectSettings';
+    keyStatusBarItem.show();
+    return;
+  }
+
+  const cached = getCachedKeyProjectStatuses(config);
+  const first = cached?.[0];
+  if (!first) {
+    keyStatusBarItem.text = '$(bookmark) not loaded';
+    keyStatusBarItem.tooltip = 'Click to refresh key project status.';
+    keyStatusBarItem.show();
+    return;
+  }
+
+  keyStatusBarItem.text = `$(bookmark) ${first.repoName} - ${first.branch}`;
+  keyStatusBarItem.tooltip = formatKeyProjectTooltip(first);
+  keyStatusBarItem.show();
+}
+
 function assertString(value: unknown, key: string): string {
   if (typeof value !== 'string' || value.trim().length === 0) {
     throw new Error(`Invalid config field '${key}': expected non-empty string.`);
@@ -173,6 +371,589 @@ function assertNumber(value: unknown, key: string): number {
     throw new Error(`Invalid config field '${key}': expected number.`);
   }
   return value;
+}
+
+function assertStringArray(value: unknown, key: string): string[] {
+  if (!Array.isArray(value)) {
+    throw new Error(`Invalid config field '${key}': expected string array.`);
+  }
+
+  return value
+    .filter((entry): entry is string => typeof entry === 'string')
+    .map((entry) => entry.trim().replace(/[\\/]+$/g, ''))
+    .filter((entry) => entry.length > 0);
+}
+
+function getWorkspaceFolderUri(workspacePath?: string): vscode.Uri | null {
+  const overridePath = workspacePath ?? keyProjectsWorkspaceOverride;
+  if (overridePath) {
+    return vscode.Uri.file(overridePath);
+  }
+
+  return vscode.workspace.workspaceFolders?.[0]?.uri ?? null;
+}
+
+function getKeyProjectsConfigUri(workspacePath?: string): vscode.Uri | null {
+  const workspaceUri = getWorkspaceFolderUri(workspacePath);
+  return workspaceUri ? vscode.Uri.joinPath(workspaceUri, '.vscode', 'mytoolbox.json') : null;
+}
+
+function getDefaultKeyProjectsConfigContent(): string {
+  return `${JSON.stringify(
+    {
+      keyProjects: {
+        mode: 'local',
+        rootDir: '',
+        repoNames: [],
+        sshTarget: '',
+        sshPort: 22,
+        gitPath: 'git',
+        sshPath: 'ssh'
+      }
+    },
+    null,
+    2
+  )}
+`;
+}
+
+function isFileNotFoundError(error: unknown): boolean {
+  if (error instanceof vscode.FileSystemError) {
+    const details = `${error.name} ${error.message}`;
+    return /FileNotFound|EntryNotFound|ENOENT/i.test(details);
+  }
+
+  const details = error instanceof Error ? `${error.name} ${error.message}` : String(error);
+  return /FileNotFound|EntryNotFound|ENOENT/i.test(details);
+}
+
+async function getKeyProjectsConfig(workspacePath?: string): Promise<KeyProjectsConfig> {
+  const configUri = getKeyProjectsConfigUri(workspacePath);
+  if (!configUri) {
+    const result = {
+      mode: 'local' as KeyProjectsMode,
+      rootDir: '',
+      repoNames: [],
+      sshTarget: '',
+      sshPort: 22,
+      gitPath: 'git',
+      sshPath: 'ssh',
+      loadedConfigPath: '<no-workspace>',
+      configExists: false,
+      workspaceAvailable: false
+    };
+
+    outputChannel?.appendLine('[key-projects] config path=<no-workspace> exists=false mode=local rootDir=<empty> repos=<none> sshTarget=<empty> sshPort=22');
+    return result;
+  }
+
+  let parsed: Record<string, unknown> | null = null;
+
+  try {
+    const bytes = await vscode.workspace.fs.readFile(configUri);
+    const rawText = Buffer.from(bytes).toString('utf8');
+    const raw = JSON.parse(rawText) as unknown;
+    if (!raw || typeof raw !== 'object') {
+      throw new Error(`Invalid config file '${configUri.toString()}': root must be a JSON object.`);
+    }
+    parsed = raw as Record<string, unknown>;
+  } catch (error) {
+    if (!isFileNotFoundError(error)) {
+      throw error;
+    }
+  }
+
+  const section =
+    parsed && parsed.keyProjects && typeof parsed.keyProjects === 'object'
+      ? (parsed.keyProjects as Record<string, unknown>)
+      : {};
+  const rawMode = typeof section.mode === 'string' ? section.mode.trim().toLowerCase() : 'local';
+  const mode: KeyProjectsMode = rawMode === 'ssh' ? 'ssh' : 'local';
+
+  const result = {
+    mode,
+    rootDir: typeof section.rootDir === 'string' ? section.rootDir.trim() : '',
+    repoNames: assertStringArray(section.repoNames ?? [], 'keyProjects.repoNames'),
+    sshTarget: typeof section.sshTarget === 'string' ? section.sshTarget.trim() : '',
+    sshPort: typeof section.sshPort === 'number' && Number.isFinite(section.sshPort) ? Math.max(1, section.sshPort) : 22,
+    gitPath: typeof section.gitPath === 'string' && section.gitPath.trim() ? section.gitPath.trim() : 'git',
+    sshPath: typeof section.sshPath === 'string' && section.sshPath.trim() ? section.sshPath.trim() : 'ssh',
+    loadedConfigPath: configUri.toString(),
+    configExists: Boolean(parsed),
+    workspaceAvailable: true
+  };
+
+  outputChannel?.appendLine(
+    `[key-projects] config path=${result.loadedConfigPath} exists=${result.configExists} mode=${result.mode} rootDir=${result.rootDir || '<empty>'} repos=${result.repoNames.join(', ') || '<none>'} sshTarget=${result.sshTarget || '<empty>'} sshPort=${result.sshPort}`
+  );
+
+  return result;
+}
+
+function getKeyProjectsConfigurationIssue(config: KeyProjectsConfig): string | null {
+  if (!config.workspaceAvailable) {
+    return 'Open a workspace folder to use key projects.';
+  }
+
+  if (!config.configExists) {
+    return 'Create .vscode/mytoolbox.json to list key projects.';
+  }
+
+  if (!config.rootDir) {
+    return 'Set keyProjects.rootDir in .vscode/mytoolbox.json.';
+  }
+
+  if (config.repoNames.length === 0) {
+    return 'Set keyProjects.repoNames in .vscode/mytoolbox.json.';
+  }
+
+  if (config.mode === 'ssh' && !config.sshTarget) {
+    return 'Set keyProjects.sshTarget in .vscode/mytoolbox.json when mode is ssh.';
+  }
+
+  return null;
+}
+
+async function openKeyProjectsSettings(workspacePath?: string): Promise<string> {
+  const workspaceUri = getWorkspaceFolderUri(workspacePath);
+  if (!workspaceUri) {
+    throw new Error('Open a workspace folder before editing key project settings.');
+  }
+
+  const configUri = vscode.Uri.joinPath(workspaceUri, '.vscode', 'mytoolbox.json');
+  const configDir = vscode.Uri.joinPath(workspaceUri, '.vscode');
+
+  outputChannel?.appendLine(`[key-projects] opening settings file ${configUri.toString()}`);
+
+  try {
+    await vscode.workspace.fs.stat(configDir);
+  } catch (error) {
+    if (!isFileNotFoundError(error)) {
+      throw error;
+    }
+    await vscode.workspace.fs.createDirectory(configDir);
+  }
+
+  try {
+    await vscode.workspace.fs.stat(configUri);
+  } catch (error) {
+    if (!isFileNotFoundError(error)) {
+      throw error;
+    }
+    await vscode.workspace.fs.writeFile(configUri, Buffer.from(getDefaultKeyProjectsConfigContent(), 'utf8'));
+  }
+
+  const doc = await vscode.workspace.openTextDocument(configUri);
+  await vscode.window.showTextDocument(doc, { preview: false });
+  return configUri.scheme === 'file' ? configUri.fsPath : configUri.toString();
+}
+
+function getRepoPath(rootDir: string, repoName: string, mode: KeyProjectsMode): string {
+  if (repoName === '.') {
+    return mode === 'ssh' ? rootDir.replace(/\\/g, '/') : rootDir;
+  }
+
+  if (mode === 'ssh') {
+    return path.posix.join(rootDir.replace(/\\/g, '/'), repoName);
+  }
+
+  return path.join(rootDir, repoName);
+}
+
+function getRepoDisplayName(repoPath: string, mode: KeyProjectsMode): string {
+  const normalized = mode === 'ssh'
+    ? repoPath.replace(/\\/g, '/').replace(/\/+$/g, '')
+    : repoPath.replace(/[\\/]+$/g, '');
+  const displayName = mode === 'ssh' ? path.posix.basename(normalized) : path.basename(normalized);
+  return displayName || normalized;
+}
+
+function parseRemoteRepoName(remoteUrl: string, fallbackName: string): string {
+  const trimmed = remoteUrl.trim().replace(/[\\/]+$/g, '');
+  if (!trimmed) {
+    return fallbackName;
+  }
+
+  const lastSegment = trimmed.split(/[/:]/).filter((segment) => segment.length > 0).pop();
+  return lastSegment || fallbackName;
+}
+
+async function loadRepoDisplayName(config: KeyProjectsConfig, repoPath: string): Promise<string> {
+  const fallbackName = getRepoDisplayName(repoPath, config.mode);
+
+  try {
+    const remoteUrl = (await runGitForKeyProject(config, repoPath, ['config', '--get', 'remote.origin.url'])).trim();
+    return parseRemoteRepoName(remoteUrl, fallbackName);
+  } catch {
+    return fallbackName;
+  }
+}
+
+function quotePosixShellArg(value: string): string {
+  return `'${value.replace(/'/g, `"'"'`)}'`;
+}
+
+function buildRemoteGitCommand(repoPath: string, args: string[]): string {
+  return ['git', '-C', quotePosixShellArg(repoPath), ...args].join(' ');
+}
+
+function getKeyProjectsConfigSignature(config: KeyProjectsConfig): string {
+  return JSON.stringify({
+    mode: config.mode,
+    rootDir: config.rootDir,
+    repoNames: config.repoNames,
+    sshTarget: config.sshTarget,
+    sshPort: config.sshPort,
+    gitPath: config.gitPath,
+    sshPath: config.sshPath,
+    loadedConfigPath: config.loadedConfigPath,
+    configExists: config.configExists,
+    workspaceAvailable: config.workspaceAvailable
+  });
+}
+
+function invalidateKeyProjectsCache(reason: string): void {
+  keyProjectsCache = null;
+}
+
+function getCachedKeyProjectStatuses(config: KeyProjectsConfig): KeyProjectStatus[] | null {
+  const signature = getKeyProjectsConfigSignature(config);
+  if (keyProjectsCache?.signature !== signature) {
+    return null;
+  }
+
+  return keyProjectsCache.statuses;
+}
+
+function setCachedKeyProjectStatuses(config: KeyProjectsConfig, statuses: KeyProjectStatus[]): void {
+  keyProjectsCache = {
+    signature: getKeyProjectsConfigSignature(config),
+    statuses
+  };
+}
+
+function parseGitStatusSummary(output: string): {
+  branch: string;
+  upstream?: string;
+  syncState: 'synced' | 'ahead' | 'behind' | 'diverged' | 'no-upstream' | 'unknown';
+  aheadCount: number;
+  behindCount: number;
+  shortStatus: string;
+  clean: boolean;
+} {
+  const lines = output.replace(/\r/g, '').split('\n');
+  let branch = 'HEAD';
+  let upstream: string | undefined;
+  let aheadCount = 0;
+  let behindCount = 0;
+  const shortLines: string[] = [];
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) {
+      continue;
+    }
+
+    if (trimmed.startsWith('# branch.head ')) {
+      branch = trimmed.slice('# branch.head '.length).trim() || 'HEAD';
+      continue;
+    }
+
+    if (trimmed.startsWith('# branch.upstream ')) {
+      upstream = trimmed.slice('# branch.upstream '.length).trim() || undefined;
+      continue;
+    }
+
+    if (trimmed.startsWith('# branch.ab ')) {
+      const match = trimmed.match(/^# branch\.ab \+(\d+) \-(\d+)$/);
+      if (match) {
+        aheadCount = Number(match[1]);
+        behindCount = Number(match[2]);
+      }
+      continue;
+    }
+
+    if (!trimmed.startsWith('# ')) {
+      shortLines.push(trimmed);
+    }
+  }
+
+  let syncState: KeyProjectStatus['syncState'] = 'unknown';
+  if (!upstream) {
+    syncState = 'no-upstream';
+  } else if (aheadCount > 0 && behindCount > 0) {
+    syncState = 'diverged';
+  } else if (aheadCount > 0) {
+    syncState = 'ahead';
+  } else if (behindCount > 0) {
+    syncState = 'behind';
+  } else {
+    syncState = 'synced';
+  }
+
+  return {
+    branch,
+    upstream,
+    syncState,
+    aheadCount,
+    behindCount,
+    shortStatus: shortLines.join('\n'),
+    clean: shortLines.length === 0
+  };
+}
+
+function runCommand(command: string, args: string[], timeoutMs = 8000): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args);
+    let stdout = '';
+    let stderr = '';
+    let timedOut = false;
+
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      child.kill();
+      reject(new Error(`Command timed out after ${timeoutMs}ms: ${command}`));
+    }, timeoutMs);
+
+    child.stdout.on('data', (data: Buffer) => {
+      stdout += data.toString();
+    });
+    child.stderr.on('data', (data: Buffer) => {
+      stderr += data.toString();
+    });
+    child.on('error', (error) => {
+      clearTimeout(timeout);
+      outputChannel?.appendLine(`[key-projects] command error: ${error.message}`);
+      reject(new Error(`Failed to run ${command}: ${error.message}`));
+    });
+    child.on('close', (code) => {
+      clearTimeout(timeout);
+      if (timedOut) {
+        return;
+      }
+      if (code !== 0) {
+        const details = stderr.trim() || stdout.trim() || `exit code ${code}`;
+        outputChannel?.appendLine(`[key-projects] command failed: ${details}`);
+        reject(new Error(details));
+        return;
+      }
+      resolve(stdout.trimEnd());
+    });
+  });
+}
+
+async function runGitForKeyProject(
+  config: KeyProjectsConfig,
+  repoPath: string,
+  args: string[],
+  timeoutMs?: number
+): Promise<string> {
+  if (config.mode === 'ssh') {
+    const sshArgs = config.sshPort === 22
+      ? [config.sshTarget, buildRemoteGitCommand(repoPath, args)]
+      : ['-p', String(config.sshPort), config.sshTarget, buildRemoteGitCommand(repoPath, args)];
+    return runCommand(config.sshPath, sshArgs, timeoutMs);
+  }
+
+  return runCommand(config.gitPath, ['-C', repoPath, ...args], timeoutMs);
+}
+
+async function loadKeyProjectStatus(config: KeyProjectsConfig, repoName: string): Promise<KeyProjectStatus> {
+  const repoPath = getRepoPath(config.rootDir, repoName, config.mode);
+  const displayName = await loadRepoDisplayName(config, repoPath);
+
+  try {
+    let fetchError: string | undefined;
+    try {
+      await runGitForKeyProject(config, repoPath, ['fetch', '--prune', '--quiet'], 20000);
+    } catch (error) {
+      fetchError = error instanceof Error ? error.message : String(error);
+      outputChannel?.appendLine(`[key-projects] fetch warning repo=${repoName}: ${fetchError}`);
+    }
+
+    const summary = await runGitForKeyProject(config, repoPath, ['status', '--porcelain=v2', '--branch']);
+    const parsed = parseGitStatusSummary(summary.trimEnd());
+
+    return {
+      configuredRepoName: repoName,
+      repoName: displayName,
+      repoPath,
+      branch: parsed.branch,
+      upstream: parsed.upstream,
+      syncState: fetchError ? 'unknown' : parsed.syncState,
+      aheadCount: parsed.aheadCount,
+      behindCount: parsed.behindCount,
+      shortStatus: parsed.shortStatus,
+      clean: parsed.clean,
+      available: true,
+      fetchError
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    outputChannel?.appendLine(`[key-projects] failed repo=${repoName}: ${message}`);
+    return {
+      configuredRepoName: repoName,
+      repoName: displayName,
+      repoPath,
+      branch: 'unknown',
+      syncState: 'unknown',
+      aheadCount: 0,
+      behindCount: 0,
+      shortStatus: '',
+      clean: false,
+      available: false,
+      error: message
+    };
+  }
+}
+
+async function loadKeyProjectStatuses(config: KeyProjectsConfig): Promise<KeyProjectStatus[]> {
+  outputChannel?.appendLine(`[key-projects] refresh start count=${config.repoNames.length}`);
+  const statuses: KeyProjectStatus[] = [];
+  for (const repoName of config.repoNames) {
+    statuses.push(await loadKeyProjectStatus(config, repoName));
+  }
+  return statuses;
+}
+
+async function refreshKeyProjects(): Promise<void> {
+  if (keyProjectsRefreshPromise) {
+    return keyProjectsRefreshPromise;
+  }
+
+  keyProjectsRefreshPromise = (async () => {
+    const config = await getKeyProjectsConfig();
+    const issue = getKeyProjectsConfigurationIssue(config);
+    if (issue) {
+      outputChannel?.appendLine(`[key-projects] refresh skipped: ${issue}`);
+      invalidateKeyProjectsCache('configuration issue');
+      sidebarViewProvider?.refresh();
+      await updateKeyStatusBar();
+      return;
+    }
+
+    const statuses = await loadKeyProjectStatuses(config);
+    setCachedKeyProjectStatuses(config, statuses);
+    outputChannel?.appendLine(`[key-projects] refresh complete count=${statuses.length}`);
+    sidebarViewProvider?.refresh();
+    await updateKeyStatusBar();
+  })();
+
+  sidebarViewProvider?.refresh();
+  void updateKeyStatusBar();
+
+  try {
+    await keyProjectsRefreshPromise;
+  } finally {
+    keyProjectsRefreshPromise = null;
+    sidebarViewProvider?.refresh();
+    await updateKeyStatusBar();
+  }
+}
+
+function formatKeyProjectTooltip(status: KeyProjectStatus): vscode.MarkdownString {
+  const escape = (value: string): string => value.replace(/\\/g, '\\\\').replace(/`/g, '\\`');
+  const code = (value: string): string => '`' + escape(value) + '`';
+  const lines = [
+    '- repo: ' + code(status.repoName),
+    '- branch: ' + code(status.branch),
+    '- remote: ' + code(getKeyProjectSyncLabel(status)),
+    '- status: ' + code(status.available ? (status.clean ? 'clean' : 'dirty') : 'unavailable'),
+    '- path: ' + code(status.repoPath)
+  ];
+
+  if (!status.available) {
+    lines.push('- error: ' + code(status.error ?? 'Unavailable'));
+  } else {
+    lines.push('- upstream: ' + code(status.upstream ?? 'not configured'));
+    lines.push('- fetch: ' + code(status.fetchError ? 'failed (' + status.fetchError + ')' : 'ok'));
+
+    if (status.clean) {
+      lines.push('- changes: ' + code('working tree clean'));
+    } else {
+      lines.push('- changes:');
+      for (const entry of status.shortStatus.split('\n').filter((line) => line.trim().length > 0)) {
+        lines.push('  - ' + code(entry));
+      }
+    }
+  }
+
+  return new vscode.MarkdownString(lines.join('\n'));
+}
+
+function getKeyProjectSyncLabel(status: Pick<KeyProjectStatus, 'syncState' | 'aheadCount' | 'behindCount'>): string {
+  switch (status.syncState) {
+    case 'synced':
+      return 'synced';
+    case 'ahead':
+      return 'ahead ' + status.aheadCount;
+    case 'behind':
+      return 'behind ' + status.behindCount;
+    case 'diverged':
+      return 'diverged +' + status.aheadCount + '/-' + status.behindCount;
+    case 'no-upstream':
+      return 'no upstream';
+    default:
+      return 'sync unknown';
+  }
+}
+
+function formatKeyProjectOutput(status: KeyProjectStatus): string {
+  const lines = [
+    '[key-project] repo=' + status.repoName,
+    'Path: ' + status.repoPath,
+    'Branch: ' + status.branch,
+    'Upstream: ' + (status.upstream ?? 'not configured'),
+    'Remote Sync: ' + getKeyProjectSyncLabel(status),
+    'Fetch: ' + (status.fetchError ? 'failed (' + status.fetchError + ')' : 'ok'),
+    'Status: ' + (status.available ? (status.clean ? 'clean' : 'dirty') : 'unavailable'),
+    '',
+    status.available ? (status.fullStatus ?? '') : 'Error: ' + (status.error ?? 'Unavailable')
+  ];
+
+  return lines.join('\n').trim();
+}
+
+async function showKeyProjectStatus(repoName: string): Promise<string> {
+  const config = await getKeyProjectsConfig();
+  const repoPath = getRepoPath(config.rootDir, repoName, config.mode);
+  const displayName = await loadRepoDisplayName(config, repoPath);
+  let status = getCachedKeyProjectStatuses(config)?.find((entry) => entry.configuredRepoName === repoName) ?? {
+    configuredRepoName: repoName,
+    repoName: displayName,
+    repoPath,
+    branch: 'unknown',
+    syncState: 'unknown',
+    aheadCount: 0,
+    behindCount: 0,
+    shortStatus: '',
+    clean: false,
+    available: false,
+    error: 'Status not loaded. Click Refresh first.'
+  };
+
+  if (status.available) {
+    try {
+      const fullStatus = (await runGitForKeyProject(config, repoPath, ['status'])).trim();
+      status = { ...status, fullStatus };
+      const cached = getCachedKeyProjectStatuses(config);
+      if (cached) {
+        setCachedKeyProjectStatuses(
+          config,
+          cached.map((entry) => (entry.configuredRepoName === repoName ? status : entry))
+        );
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      status = { ...status, available: false, error: message, fullStatus: message };
+    }
+  }
+
+  const text = formatKeyProjectOutput(status);
+  outputChannel.appendLine(`[key-projects] showing detailed status for repo=${repoName} display=${status.repoName}`);
+  outputChannel.appendLine(text);
+  outputChannel.show(true);
+  return text;
 }
 
 function resolveConfiguredConfigPathWithContext(configFile: string, options?: ResolvePathOptions): string {
@@ -764,6 +1545,12 @@ async function openSettingsConfig(): Promise<void> {
 export function activate(context: vscode.ExtensionContext): void {
   extensionContextRef = context;
   outputChannel = vscode.window.createOutputChannel('Reverse Proxy');
+  keyStatusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 150);
+  keyStatusBarItem.command = 'reverseProxy.refreshKeyProjects';
+  keyStatusBarItem.text = '$(bookmark) not loaded';
+  keyStatusBarItem.tooltip = 'Click to refresh key project status.';
+  keyStatusBarItem.show();
+
   statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
   statusBarItem.command = 'reverseProxy.showStatus';
   setProxyState('stopped');
@@ -775,11 +1562,46 @@ export function activate(context: vscode.ExtensionContext): void {
   }
 
   void syncProxyStateFromSystem();
+  void updateKeyStatusBar();
+
+  const keyProjectsWatchers = (vscode.workspace.workspaceFolders ?? []).map((folder) => {
+    const watcher = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(folder, '.vscode/mytoolbox.json'));
+    watcher.onDidChange(() => {
+      invalidateKeyProjectsCache('config file changed');
+      sidebarViewProvider?.refresh();
+      void updateKeyStatusBar();
+    });
+    watcher.onDidCreate(() => {
+      invalidateKeyProjectsCache('config file created');
+      sidebarViewProvider?.refresh();
+      void updateKeyStatusBar();
+    });
+    watcher.onDidDelete(() => {
+      invalidateKeyProjectsCache('config file deleted');
+      sidebarViewProvider?.refresh();
+      void updateKeyStatusBar();
+    });
+    return watcher;
+  });
+
+  sidebarTreeView = vscode.window.createTreeView('reverseProxy.sidebarView', { treeDataProvider: sidebarViewProvider });
 
   context.subscriptions.push(
     outputChannel,
+    keyStatusBarItem,
     statusBarItem,
-    vscode.window.registerTreeDataProvider('reverseProxy.sidebarView', sidebarViewProvider)
+    sidebarTreeView,
+    ...keyProjectsWatchers,
+    vscode.workspace.onDidChangeConfiguration((event) => {
+      if (event.affectsConfiguration('reverseProxy.configFile')) {
+        void syncProxyStateFromSystem();
+  void updateKeyStatusBar();
+      }
+      if (event.affectsConfiguration('reverseProxy')) {
+        sidebarViewProvider?.refresh();
+      }
+      void updateKeyStatusBar();
+    })
   );
 
   context.subscriptions.push(
@@ -819,7 +1641,25 @@ export function activate(context: vscode.ExtensionContext): void {
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand('reverseProxy.test.getSidebarItems', () => {
+    vscode.commands.registerCommand('reverseProxy.openKeyProjectSettings', async () => {
+      return openKeyProjectsSettings();
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('reverseProxy.refreshKeyProjects', async () => {
+      await refreshKeyProjects();
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('reverseProxy.showKeyProjectStatus', async (repoName: string) => {
+      return showKeyProjectStatus(repoName);
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('reverseProxy.test.getSidebarItems', async () => {
       if (!sidebarViewProvider) {
         return [];
       }
@@ -845,16 +1685,28 @@ export function activate(context: vscode.ExtensionContext): void {
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand('reverseProxy.test.clickSidebarItem', async (label: string) => {
-      if (!sidebarViewProvider) {
-        throw new Error('Sidebar provider is not initialized.');
+    vscode.commands.registerCommand(
+      'reverseProxy.test.clickSidebarItem',
+      async (args: string | { label: string; parentLabel?: string }) => {
+        if (!sidebarViewProvider) {
+          throw new Error('Sidebar provider is not initialized.');
+        }
+        const request = typeof args === 'string' ? { label: args } : args;
+        const roots = await sidebarViewProvider.getChildren();
+        const children = (
+          await Promise.all(
+            roots
+              .filter((root) => !request.parentLabel || String(root.label ?? '') === request.parentLabel)
+              .map((root) => sidebarViewProvider!.getChildren(root))
+          )
+        ).flat();
+        const item = children.find((entry) => String(entry.label ?? '') === request.label);
+        if (!item || !item.command) {
+          throw new Error(`Sidebar item '${request.label}' is not clickable.`);
+        }
+        return vscode.commands.executeCommand(item.command.command, ...(item.command.arguments ?? []));
       }
-      const item = sidebarViewProvider.getItemsForTest().children.find((x) => x.label === label);
-      if (!item || !item.command || !item.enabled) {
-        throw new Error(`Sidebar item '${label}' is not clickable.`);
-      }
-      await vscode.commands.executeCommand(item.command);
-    })
+    )
   );
 
   context.subscriptions.push(
@@ -873,6 +1725,16 @@ export function activate(context: vscode.ExtensionContext): void {
     })
   );
 
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('reverseProxy.test.getStatusBarState', () => {
+      return {
+        proxyText: statusBarItem.text,
+        keyText: keyStatusBarItem.text,
+        keyTooltip: typeof keyStatusBarItem.tooltip === 'string' ? keyStatusBarItem.tooltip : keyStatusBarItem.tooltip?.value
+      };
+    })
+  );
   context.subscriptions.push(
     vscode.commands.registerCommand('reverseProxy.test.openSettingsWithDirectory', async (dir: string) => {
       const reverseProxyConfig = vscode.workspace.getConfiguration('reverseProxy');
@@ -895,11 +1757,29 @@ export function activate(context: vscode.ExtensionContext): void {
       return finalConfigPath;
     })
   );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('reverseProxy.test.setKeyProjectsWorkspaceOverride', async (workspacePath?: string | null) => {
+      keyProjectsWorkspaceOverride = workspacePath ?? null;
+      sidebarViewProvider?.refresh();
+      return keyProjectsWorkspaceOverride;
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('reverseProxy.test.openKeyProjectSettingsWithDirectory', async (dir: string) => {
+      return openKeyProjectsSettings(dir);
+    })
+  );
 }
 
 export function deactivate(): void {
+  sidebarTreeView = null;
   sidebarViewProvider = null;
   externalTunnelPid = null;
+  if (keyStatusBarItem) {
+    keyStatusBarItem.dispose();
+  }
   if (connectTimer) {
     clearTimeout(connectTimer);
     connectTimer = null;
@@ -909,4 +1789,6 @@ export function deactivate(): void {
     sshProcess = null;
   }
 }
+
+
 
