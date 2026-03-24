@@ -92,6 +92,8 @@ type KeyProjectsViewRow = {
   remoteLabel: string;
   stateLabel: string;
   stateEmoji: string;
+  detailTitle: string;
+  detailText: string;
   clean: boolean;
   available: boolean;
 };
@@ -223,6 +225,8 @@ async function getKeyProjectsViewModel(): Promise<KeyProjectsViewModel> {
       remoteLabel: status.available ? getKeyProjectSyncLabel(status) : 'unavailable',
       stateLabel: getKeyProjectStateLabel(status),
       stateEmoji: getKeyProjectStateEmoji(status),
+      detailTitle: status.repoName + ' - ' + status.branch,
+      detailText: formatKeyProjectCachedDetail(status),
       clean: status.clean,
       available: status.available
     }))
@@ -287,6 +291,12 @@ function renderToolBoxWebview(webview: vscode.Webview, model: ToolBoxViewModel):
     '<button id="refresh" class="icon-button" title="' + escapeHtml(model.keyProjects.refreshing ? 'Refreshing...' : 'Refresh') + '" aria-label="' + escapeHtml(model.keyProjects.refreshing ? 'Refreshing...' : 'Refresh') + '" ' + (model.keyProjects.refreshing ? 'disabled' : '') + '><span class="action-icon" aria-hidden="true">' + getKeyProjectsToolbarIconSvg('refresh') + '</span></button>',
     '<button id="key-settings" class="icon-button secondary" title="Settings" aria-label="Settings"><span class="action-icon" aria-hidden="true">' + getKeyProjectsToolbarIconSvg('settings') + '</span></button>'
   ].join('');
+
+  const keyDetailsByRepo = JSON.stringify(
+    Object.fromEntries(
+      model.keyProjects.rows.map((row) => [row.configuredRepoName, { title: row.detailTitle, text: row.detailText }])
+    )
+  ).replace(/</g, '\u003C');
 
   const keyRows = model.keyProjects.rows
     .map((row) => {
@@ -700,6 +710,7 @@ function renderToolBoxWebview(webview: vscode.Webview, model: ToolBoxViewModel):
     const detailPopover = document.getElementById('detail-popover');
     const detailTitle = document.getElementById('detail-title');
     const detailBody = document.getElementById('detail-body');
+    const keyDetailsByRepo = ${keyDetailsByRepo};
     const closeDetails = () => {
       detailPopover?.classList.remove('open');
       detailPopover?.setAttribute('aria-hidden', 'true');
@@ -740,10 +751,21 @@ function renderToolBoxWebview(webview: vscode.Webview, model: ToolBoxViewModel):
     document.querySelectorAll('.table-row').forEach((row) => {
       row.addEventListener('click', (event) => {
         const repoName = row.getAttribute('data-repo');
-        if (repoName) {
+        if (repoName && detailBody && detailTitle && detailPopover) {
           const clientX = event instanceof MouseEvent ? event.clientX : 12;
           const clientY = event instanceof MouseEvent ? event.clientY : 12;
-          vscode.postMessage({ type: 'showStatus', repoName, left: clientX + 8, top: clientY + 8 });
+          const detail = keyDetailsByRepo[repoName];
+          const margin = 12;
+          const width = Math.min(340, window.innerWidth - margin * 2);
+          const height = Math.min(240, window.innerHeight - margin * 2);
+          const left = Math.min(Math.max(clientX + 8, margin), window.innerWidth - width - margin);
+          const top = Math.min(Math.max(clientY + 8, margin), window.innerHeight - height - margin);
+          detailTitle.textContent = detail?.title || 'Key Project Details';
+          detailBody.textContent = detail?.text || 'Status not loaded. Click Refresh first.';
+          detailPopover.style.left = left + 'px';
+          detailPopover.style.top = top + 'px';
+          detailPopover.classList.add('open');
+          detailPopover.setAttribute('aria-hidden', 'false');
         }
       });
     });
