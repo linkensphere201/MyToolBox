@@ -91,6 +91,7 @@ type KeyProjectsViewRow = {
   branch: string;
   remoteLabel: string;
   stateLabel: string;
+  stateEmoji: string;
   clean: boolean;
   available: boolean;
 };
@@ -159,27 +160,27 @@ function getReverseTunnelTone(state: ProxyState): ReverseTunnelViewModel['tone']
 
 function getReverseTunnelDetail(state: ProxyState): string {
   if (state === 'connected') {
-    return 'Tunnel is connected and forwarding traffic.';
+    return '';
   }
   if (state === 'starting') {
-    return 'Tunnel is starting and waiting for SSH readiness.';
+    return '';
   }
   if (state === 'failed') {
-    return 'Tunnel failed. Open logs or status for details.';
+    return '';
   }
-  return 'Tunnel is stopped.';
+  return '';
 }
 
 function getReverseTunnelActions(): ToolBoxAction[] {
   return [
     {
       id: 'toggle',
-      label: proxyState === 'connected' ? 'Stop Tunnel' : proxyState === 'starting' ? 'Connecting...' : 'Start Tunnel',
+      label: proxyState === 'connected' ? 'Stop' : proxyState === 'starting' ? 'Connecting...' : 'Start',
       enabled: proxyState !== 'starting'
     },
     {
       id: 'logs',
-      label: 'Open Logs',
+      label: 'Logs',
       enabled: true
     },
     {
@@ -198,6 +199,14 @@ function getKeyProjectStateLabel(status: Pick<KeyProjectStatus, 'clean' | 'avail
   return status.clean ? 'clean' : 'dirty';
 }
 
+function getKeyProjectStateEmoji(status: Pick<KeyProjectStatus, 'clean' | 'available'>): string {
+  if (!status.available) {
+    return '\u26A0';
+  }
+
+  return status.clean ? '\u2714\uFE0F' : '\u2757';
+}
+
 async function getKeyProjectsViewModel(): Promise<KeyProjectsViewModel> {
   const config = await getKeyProjectsConfig();
   const issue = getKeyProjectsConfigurationIssue(config);
@@ -213,6 +222,7 @@ async function getKeyProjectsViewModel(): Promise<KeyProjectsViewModel> {
       branch: status.available ? status.branch : 'unavailable',
       remoteLabel: status.available ? getKeyProjectSyncLabel(status) : 'unavailable',
       stateLabel: getKeyProjectStateLabel(status),
+      stateEmoji: getKeyProjectStateEmoji(status),
       clean: status.clean,
       available: status.available
     }))
@@ -244,6 +254,16 @@ function createNonce(): string {
   return Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
 }
 
+function getReverseTunnelActionIconSvg(actionId: string): string {
+  if (actionId === 'toggle') {
+    return '<svg viewBox="0 0 16 16" fill="currentColor" focusable="false" aria-hidden="true"><path d="M7.5 1v7h1V1z"/><path d="M3 8.812a5 5 0 0 1 2.578-4.375l-.485-.874A6 6 0 1 0 11 3.616l-.501.865A5 5 0 1 1 3 8.812"/></svg>';
+  }
+  if (actionId === 'logs') {
+    return '<svg viewBox="0 0 16 16" fill="currentColor" focusable="false" aria-hidden="true"><path d="M5 10.5a.5.5 0 0 1 .5-.5h2a.5.5 0 0 1 0 1h-2a.5.5 0 0 1-.5-.5m0-2a.5.5 0 0 1 .5-.5h5a.5.5 0 0 1 0 1h-5a.5.5 0 0 1-.5-.5m0-2a.5.5 0 0 1 .5-.5h5a.5.5 0 0 1 0 1h-5a.5.5 0 0 1-.5-.5m0-2a.5.5 0 0 1 .5-.5h5a.5.5 0 0 1 0 1h-5a.5.5 0 0 1-.5-.5"/><path d="M3 0h10a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2v-1h1v1a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1V2a1 1 0 0 0-1-1H3a1 1 0 0 0-1 1v1H1V2a2 2 0 0 1 2-2"/><path d="M1 5v-.5a.5.5 0 0 1 1 0V5h.5a.5.5 0 0 1 0 1h-2a.5.5 0 0 1 0-1zm0 3v-.5a.5.5 0 0 1 1 0V8h.5a.5.5 0 0 1 0 1h-2a.5.5 0 0 1 0-1zm0 3v-.5a.5.5 0 0 1 1 0v.5h.5a.5.5 0 0 1 0 1h-2a.5.5 0 0 1 0-1z"/></svg>';
+  }
+  return '<svg viewBox="0 0 16 16" fill="currentColor" focusable="false" aria-hidden="true"><path d="M7.068.727c.243-.97 1.62-.97 1.864 0l.071.286a.96.96 0 0 0 1.622.434l.205-.211c.695-.719 1.888-.03 1.613.931l-.08.284a.96.96 0 0 0 1.187 1.187l.283-.081c.96-.275 1.65.918.931 1.613l-.211.205a.96.96 0 0 0 .434 1.622l.286.071c.97.243.97 1.62 0 1.864l-.286.071a.96.96 0 0 0-.434 1.622l.211.205c.719.695.03 1.888-.931 1.613l-.284-.08a.96.96 0 0 0-1.187 1.187l.081.283c.275.96-.918 1.65-1.613.931l-.205-.211a.96.96 0 0 0-1.622.434l-.071.286c-.243.97-1.62.97-1.864 0l-.071-.286a.96.96 0 0 0-1.622-.434l-.205.211c-.695.719-1.888.03-1.613-.931l.08-.284a.96.96 0 0 0-1.186-1.187l-.284.081c-.96.275-1.65-.918-.931-1.613l.211-.205a.96.96 0 0 0-.434-1.622l-.286-.071c-.97-.243-.97-1.62 0-1.864l.286-.071a.96.96 0 0 0 .434-1.622l-.211-.205c-.719-.695-.03-1.888.931-1.613l.284.08a.96.96 0 0 0 1.187-1.186l-.081-.284c-.275-.96.918-1.65 1.613-.931l.205.211a.96.96 0 0 0 1.622-.434zM12.973 8.5H8.25l-2.834 3.779A4.998 4.998 0 0 0 12.973 8.5m0-1a4.998 4.998 0 0 0-7.557-3.779l2.834 3.78zM5.048 3.967l-.087.065zm-.431.355A4.98 4.98 0 0 0 3.002 8c0 1.455.622 2.765 1.615 3.678L7.375 8zm.344 7.646.087.065z"/></svg>';
+}
+
 function renderToolBoxWebview(webview: vscode.Webview, model: ToolBoxViewModel): string {
   const nonce = createNonce();
   const reverseActions = model.reverseTunnel.actions
@@ -252,16 +272,20 @@ function renderToolBoxWebview(webview: vscode.Webview, model: ToolBoxViewModel):
       if (action.id === 'toggle') {
         classes.push('primary');
       }
-      return '<button class="' + classes.join(' ') + '" data-action="' + escapeHtml(action.id) + '" ' + (action.enabled ? '' : 'disabled') + '>' + escapeHtml(action.label) + '</button>';
+      const icon = action.id === 'toggle'
+        ? (model.reverseTunnel.tone === 'connected' ? '\u25A0' : '\u25B6')
+        : action.id === 'logs'
+          ? '\u2261'
+          : '\u2699';
+      return '<button class="' + classes.join(' ') + '" data-action="' + escapeHtml(action.id) + '" ' + (action.enabled ? '' : 'disabled') + '><span class="action-icon">' + icon + '</span><span>' + escapeHtml(action.label) + '</span></button>';
     })
     .join('');
 
   const keyRows = model.keyProjects.rows
     .map((row) => {
-      const stateTone = row.available ? (row.clean ? 'clean' : 'dirty') : 'unavailable';
       return [
         '<button class="table-row" data-repo="' + escapeHtml(row.configuredRepoName) + '">',
-        '  <span class="cell state"><span class="dot ' + stateTone + '"></span>' + escapeHtml(row.stateLabel) + '</span>',
+        '  <span class="cell state" title="' + escapeHtml(row.stateLabel) + '">' + row.stateEmoji + '</span>',
         '  <span class="cell repo">' + escapeHtml(row.repoName) + '</span>',
         '  <span class="cell branch">' + escapeHtml(row.branch) + '</span>',
         '  <span class="cell remote">' + escapeHtml(row.remoteLabel) + '</span>',
@@ -308,7 +332,7 @@ function renderToolBoxWebview(webview: vscode.Webview, model: ToolBoxViewModel):
     }
     .stack {
       display: grid;
-      gap: 10px;
+      gap: 8px;
     }
     .panel {
       border: 1px solid var(--vscode-panel-border);
@@ -369,7 +393,32 @@ function renderToolBoxWebview(webview: vscode.Webview, model: ToolBoxViewModel):
       color: var(--vscode-button-secondaryForeground, var(--vscode-button-foreground));
       border-radius: 6px;
       padding: 6px 10px;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
       cursor: pointer;
+      font-size: 12px;
+      line-height: 1.1;
+    }
+    .action-icon {
+      width: 14px;
+      height: 14px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      color: inherit;
+      opacity: 0.92;
+      flex: 0 0 auto;
+    }
+    .action-icon svg {
+      width: 14px;
+      height: 14px;
+      display: block;
+    }
+    .action-label {
+      display: inline-flex;
+      align-items: center;
+      transform: translateY(0.5px);
     }
     button.action.primary {
       background: var(--vscode-button-background);
@@ -406,11 +455,11 @@ function renderToolBoxWebview(webview: vscode.Webview, model: ToolBoxViewModel):
     .table-header, .table-row {
       width: 100%;
       display: grid;
-      grid-template-columns: minmax(84px, 0.85fr) minmax(138px, 1.7fr) minmax(90px, 1fr) minmax(108px, 1.1fr);
-      gap: 10px;
+      grid-template-columns: 36px minmax(124px, 180px) minmax(88px, 132px) minmax(96px, 148px);
+      gap: 8px;
       align-items: center;
       box-sizing: border-box;
-      padding: 9px 10px;
+      padding: 8px 9px;
     }
     .table-header {
       font-size: 10px;
@@ -436,11 +485,27 @@ function renderToolBoxWebview(webview: vscode.Webview, model: ToolBoxViewModel):
       text-overflow: ellipsis;
       white-space: nowrap;
     }
-    .state {
+    .table-row .state {
       display: inline-flex;
       align-items: center;
-      gap: 8px;
-      text-transform: capitalize;
+      justify-content: center;
+      font-size: 14px;
+      line-height: 1;
+    }
+    .table-header .state {
+      font-size: inherit;
+      line-height: inherit;
+      justify-content: flex-start;
+    }
+    .table-header .repo,
+    .table-header .branch,
+    .table-header .remote,
+    .table-row .repo,
+    .table-row .branch,
+    .table-row .remote {
+      justify-self: stretch;
+      width: 100%;
+      text-align: left;
     }
     .dot {
       width: 8px;
@@ -455,6 +520,54 @@ function renderToolBoxWebview(webview: vscode.Webview, model: ToolBoxViewModel):
       color: var(--vscode-descriptionForeground);
       line-height: 1.45;
     }
+    .detail-popover {
+      position: fixed;
+      display: none;
+      width: min(340px, calc(100vw - 24px));
+      max-height: min(240px, calc(100vh - 24px));
+      border: 1px solid var(--vscode-panel-border);
+      border-radius: 10px;
+      overflow: hidden;
+      background: var(--vscode-editor-background);
+      box-shadow: 0 8px 20px rgba(0, 0, 0, 0.18);
+      z-index: 30;
+    }
+    .detail-popover.open {
+      display: grid;
+      grid-template-rows: auto 1fr;
+    }
+    .detail-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--vscode-panel-border);
+    }
+    .detail-title {
+      font-size: 13px;
+      font-weight: 600;
+    }
+    .detail-close {
+      border: 0;
+      background: transparent;
+      color: var(--vscode-foreground);
+      font-size: 18px;
+      line-height: 1;
+      padding: 4px 6px;
+      cursor: pointer;
+    }
+    .detail-body {
+      margin: 0;
+      padding: 14px;
+      overflow: auto;
+      white-space: pre-wrap;
+      user-select: text;
+      -webkit-user-select: text;
+      font-family: var(--vscode-editor-font-family, var(--vscode-font-family));
+      font-size: 12px;
+      line-height: 1.5;
+    }
   </style>
 </head>
 <body>
@@ -464,7 +577,6 @@ function renderToolBoxWebview(webview: vscode.Webview, model: ToolBoxViewModel):
         <div class="panel-title">
           <div class="eyebrow">Reverse Tunnel</div>
           <div class="headline"><span class="tone ${model.reverseTunnel.tone}"></span>${escapeHtml(model.reverseTunnel.stateLabel)}</div>
-          <div class="subline">${escapeHtml(model.reverseTunnel.detail)}</div>
         </div>
       </div>
       <div class="actions">${reverseActions}</div>
@@ -473,8 +585,6 @@ function renderToolBoxWebview(webview: vscode.Webview, model: ToolBoxViewModel):
       <div class="panel-head">
         <div class="panel-title">
           <div class="eyebrow">Key Projects</div>
-          <div class="headline"><span class="tone ${model.keyProjects.refreshing ? 'starting' : 'connected'}"></span>${model.keyProjects.refreshing ? 'Refreshing' : 'Repository Status'}</div>
-          <div class="subline">Track branch cleanliness and remote sync at a glance.</div>
         </div>
       </div>
       <div class="key-toolbar">
@@ -483,6 +593,13 @@ function renderToolBoxWebview(webview: vscode.Webview, model: ToolBoxViewModel):
       </div>
       <div class="key-body">${keyBody}</div>
     </section>
+  </div>
+  <div id="detail-popover" class="detail-popover" aria-hidden="true">
+    <div class="detail-head">
+      <div id="detail-title" class="detail-title">Key Project Details</div>
+      <button id="detail-close" class="detail-close" type="button" aria-label="Close">\u00D7</button>
+    </div>
+    <pre id="detail-body" class="detail-body"></pre>
   </div>
   <script nonce="${nonce}">
     const vscode = acquireVsCodeApi();
@@ -500,11 +617,53 @@ function renderToolBoxWebview(webview: vscode.Webview, model: ToolBoxViewModel):
     document.getElementById('key-settings')?.addEventListener('click', () => {
       vscode.postMessage({ type: 'action', action: 'keySettings' });
     });
+    const detailPopover = document.getElementById('detail-popover');
+    const detailTitle = document.getElementById('detail-title');
+    const detailBody = document.getElementById('detail-body');
+    const closeDetails = () => {
+      detailPopover?.classList.remove('open');
+      detailPopover?.setAttribute('aria-hidden', 'true');
+    };
+    document.getElementById('detail-close')?.addEventListener('click', closeDetails);
+    window.addEventListener('click', (event) => {
+      if (!detailPopover?.classList.contains('open')) {
+        return;
+      }
+      const target = event.target;
+      if (target instanceof HTMLElement && (target.closest('.table-row') || target.closest('#detail-popover'))) {
+        return;
+      }
+      closeDetails();
+    });
+    window.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') {
+        closeDetails();
+      }
+    });
+    window.addEventListener('message', (event) => {
+      const message = event.data;
+      if (message?.type !== 'detail' || !detailBody || !detailTitle || !detailPopover) {
+        return;
+      }
+      const margin = 12;
+      const width = Math.min(340, window.innerWidth - margin * 2);
+      const height = Math.min(240, window.innerHeight - margin * 2);
+      const left = Math.min(Math.max(Number(message.left ?? margin), margin), window.innerWidth - width - margin);
+      const top = Math.min(Math.max(Number(message.top ?? margin), margin), window.innerHeight - height - margin);
+      detailTitle.textContent = message.title || 'Key Project Details';
+      detailBody.textContent = message.text || '';
+      detailPopover.style.left = left + 'px';
+      detailPopover.style.top = top + 'px';
+      detailPopover.classList.add('open');
+      detailPopover.setAttribute('aria-hidden', 'false');
+    });
     document.querySelectorAll('.table-row').forEach((row) => {
-      row.addEventListener('click', () => {
+      row.addEventListener('click', (event) => {
         const repoName = row.getAttribute('data-repo');
         if (repoName) {
-          vscode.postMessage({ type: 'showStatus', repoName });
+          const clientX = event instanceof MouseEvent ? event.clientX : 12;
+          const clientY = event instanceof MouseEvent ? event.clientY : 12;
+          vscode.postMessage({ type: 'showStatus', repoName, left: clientX + 8, top: clientY + 8 });
         }
       });
     });
@@ -525,9 +684,32 @@ class ToolBoxWebviewProvider implements vscode.WebviewViewProvider {
         this.view = null;
       }
     });
-    webviewView.webview.onDidReceiveMessage(async (message: { type?: string; repoName?: string; action?: string }) => {
+    webviewView.webview.onDidReceiveMessage(async (message: { type?: string; repoName?: string; action?: string; left?: number; top?: number }) => {
       if (message.type === 'showStatus' && message.repoName) {
-        await showKeyProjectStatus(message.repoName);
+        const config = await getKeyProjectsConfig();
+        const cachedStatus = getCachedKeyProjectStatuses(config)?.find((entry) => entry.configuredRepoName === message.repoName);
+        const repoPath = getRepoPath(config.rootDir, message.repoName, config.mode);
+        const displayName = await loadRepoDisplayName(config, repoPath);
+        const detailStatus = cachedStatus ?? {
+          configuredRepoName: message.repoName,
+          repoName: displayName,
+          repoPath,
+          branch: 'unknown',
+          syncState: 'unknown',
+          aheadCount: 0,
+          behindCount: 0,
+          shortStatus: '',
+          clean: false,
+          available: false,
+          error: 'Status not loaded. Click Refresh first.'
+        };
+        await webviewView.webview.postMessage({
+          type: 'detail',
+          title: detailStatus.repoName + ' - ' + detailStatus.branch,
+          text: formatKeyProjectCachedDetail(detailStatus),
+          left: message.left,
+          top: message.top
+        });
         return;
       }
       if (message.type !== 'action' || !message.action) {
@@ -1286,6 +1468,34 @@ function formatKeyProjectOutput(status: KeyProjectStatus): string {
   ];
 
   return lines.join('\n').trim();
+}
+
+function formatKeyProjectCachedDetail(status: KeyProjectStatus): string {
+  const lines = [
+    'Repo: ' + status.repoName,
+    'Path: ' + status.repoPath,
+    'Branch: ' + status.branch,
+    'Upstream: ' + (status.upstream ?? 'not configured'),
+    'Remote Sync: ' + getKeyProjectSyncLabel(status),
+    'Fetch: ' + (status.fetchError ? 'failed (' + status.fetchError + ')' : 'ok'),
+    'Status: ' + (status.available ? (status.clean ? 'clean' : 'dirty') : 'unavailable')
+  ];
+
+  if (!status.available) {
+    lines.push('Error: ' + (status.error ?? 'Unavailable'));
+    return lines.join('\n');
+  }
+
+  if (status.clean) {
+    lines.push('Changes: working tree clean');
+  } else {
+    lines.push('Changes:');
+    for (const entry of status.shortStatus.split('\n').filter((line) => line.trim().length > 0)) {
+      lines.push(entry);
+    }
+  }
+
+  return lines.join('\n');
 }
 
 async function showKeyProjectStatus(repoName: string): Promise<string> {
