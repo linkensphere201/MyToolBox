@@ -360,7 +360,7 @@ function renderToolBoxWebview(webview: vscode.Webview, model: ToolBoxViewModel):
       width: 102px;
       justify-self: start;
       margin-left: 0;
-      padding: 7px 12px;
+      padding: 7px 12px 12px;
     }
     .key-block {
       display: grid;
@@ -418,7 +418,7 @@ function renderToolBoxWebview(webview: vscode.Webview, model: ToolBoxViewModel):
     .reverse-bar {
       width: 102px;
       display: grid;
-      gap: 7px;
+      gap: 12px;
       align-items: center;
       justify-items: stretch;
       margin-top: 0;
@@ -431,7 +431,7 @@ function renderToolBoxWebview(webview: vscode.Webview, model: ToolBoxViewModel):
       font-size: 13px;
       font-weight: 600;
       line-height: 1.1;
-      margin-top: 1px;
+      margin-top: 0;
       justify-self: center;
     }
     .reverse-status-text {
@@ -461,6 +461,13 @@ function renderToolBoxWebview(webview: vscode.Webview, model: ToolBoxViewModel):
       justify-content: center;
       cursor: pointer;
       line-height: 1;
+      transition: background-color 120ms ease, border-color 120ms ease, box-shadow 120ms ease, transform 120ms ease;
+    }
+    button.action:hover:not(:disabled) {
+      background: color-mix(in srgb, var(--vscode-list-hoverBackground) 78%, var(--vscode-button-secondaryBackground, var(--vscode-button-background)));
+      border-color: color-mix(in srgb, var(--vscode-focusBorder) 50%, transparent);
+      box-shadow: 0 0 0 1px color-mix(in srgb, var(--vscode-focusBorder) 18%, transparent);
+      transform: translateY(-1px);
     }
     .action-icon {
       width: 14px;
@@ -471,6 +478,12 @@ function renderToolBoxWebview(webview: vscode.Webview, model: ToolBoxViewModel):
       color: inherit;
       opacity: 0.96;
       flex: 0 0 auto;
+      transition: transform 120ms ease, opacity 120ms ease;
+    }
+    button.action:hover:not(:disabled) .action-icon,
+    .icon-button:hover:not(:disabled) .action-icon {
+      opacity: 1;
+      transform: scale(1.06);
     }
     .action-icon svg {
       width: 14px;
@@ -505,6 +518,13 @@ function renderToolBoxWebview(webview: vscode.Webview, model: ToolBoxViewModel):
       justify-content: center;
       cursor: pointer;
       line-height: 1;
+      transition: background-color 120ms ease, border-color 120ms ease, box-shadow 120ms ease, transform 120ms ease;
+    }
+    .icon-button:hover:not(:disabled) {
+      background: color-mix(in srgb, var(--vscode-list-hoverBackground) 78%, var(--vscode-button-secondaryBackground, var(--vscode-button-background)));
+      border-color: color-mix(in srgb, var(--vscode-focusBorder) 50%, transparent);
+      box-shadow: 0 0 0 1px color-mix(in srgb, var(--vscode-focusBorder) 18%, transparent);
+      transform: translateY(-1px);
     }
     .icon-button.secondary {
       background: var(--vscode-button-secondaryBackground, var(--vscode-dropdown-background));
@@ -641,8 +661,8 @@ function renderToolBoxWebview(webview: vscode.Webview, model: ToolBoxViewModel):
       <div class="eyebrow reverse-title">Reverse Tunnel</div>
       <div class="panel reverse-panel">
         <div class="reverse-bar">
-          <div class="reverse-status"><span class="tone ${model.reverseTunnel.tone}"></span><span class="reverse-status-text">${escapeHtml(model.reverseTunnel.stateLabel)}</span></div>
           <div class="actions">${reverseActions}</div>
+          <div class="reverse-status"><span class="tone ${model.reverseTunnel.tone}"></span><span class="reverse-status-text">${escapeHtml(model.reverseTunnel.stateLabel)}</span></div>
         </div>
       </div>
     </section>
