@@ -264,22 +264,29 @@ function getReverseTunnelActionIconSvg(actionId: string): string {
   return '<svg viewBox="0 0 16 16" fill="currentColor" focusable="false" aria-hidden="true"><path d="M7.068.727c.243-.97 1.62-.97 1.864 0l.071.286a.96.96 0 0 0 1.622.434l.205-.211c.695-.719 1.888-.03 1.613.931l-.08.284a.96.96 0 0 0 1.187 1.187l.283-.081c.96-.275 1.65.918.931 1.613l-.211.205a.96.96 0 0 0 .434 1.622l.286.071c.97.243.97 1.62 0 1.864l-.286.071a.96.96 0 0 0-.434 1.622l.211.205c.719.695.03 1.888-.931 1.613l-.284-.08a.96.96 0 0 0-1.187 1.187l.081.283c.275.96-.918 1.65-1.613.931l-.205-.211a.96.96 0 0 0-1.622.434l-.071.286c-.243.97-1.62.97-1.864 0l-.071-.286a.96.96 0 0 0-1.622-.434l-.205.211c-.695.719-1.888.03-1.613-.931l.08-.284a.96.96 0 0 0-1.186-1.187l-.284.081c-.96.275-1.65-.918-.931-1.613l.211-.205a.96.96 0 0 0-.434-1.622l-.286-.071c-.97-.243-.97-1.62 0-1.864l.286-.071a.96.96 0 0 0 .434-1.622l-.211-.205c-.719-.695-.03-1.888.931-1.613l.284.08a.96.96 0 0 0 1.187-1.186l-.081-.284c-.275-.96.918-1.65 1.613-.931l.205.211a.96.96 0 0 0 1.622-.434zM12.973 8.5H8.25l-2.834 3.779A4.998 4.998 0 0 0 12.973 8.5m0-1a4.998 4.998 0 0 0-7.557-3.779l2.834 3.78zM5.048 3.967l-.087.065zm-.431.355A4.98 4.98 0 0 0 3.002 8c0 1.455.622 2.765 1.615 3.678L7.375 8zm.344 7.646.087.065z"/></svg>';
 }
 
+function getKeyProjectsToolbarIconSvg(actionId: string): string {
+  if (actionId === 'refresh') {
+    return '<svg viewBox="0 0 16 16" fill="currentColor" focusable="false" aria-hidden="true"><path d="M8 3a5 5 0 1 0 4.546 2.914.5.5 0 0 1 .908-.418A6 6 0 1 1 8 2z"/><path d="M8 4.466V.534a.25.25 0 0 1 .41-.192l2.36 1.966c.12.1.12.284 0 .384L8.41 4.658A.25.25 0 0 1 8 4.466"/></svg>';
+  }
+  return '<svg viewBox="0 0 16 16" fill="currentColor" focusable="false" aria-hidden="true"><path d="M7.068.727c.243-.97 1.62-.97 1.864 0l.071.286a.96.96 0 0 0 1.622.434l.205-.211c.695-.719 1.888-.03 1.613.931l-.08.284a.96.96 0 0 0 1.187 1.187l.283-.081c.96-.275 1.65.918.931 1.613l-.211.205a.96.96 0 0 0 .434 1.622l.286.071c.97.243.97 1.62 0 1.864l-.286.071a.96.96 0 0 0-.434 1.622l.211.205c.719.695.03 1.888-.931 1.613l-.284-.08a.96.96 0 0 0-1.187 1.187l.081.283c.275.96-.918 1.65-1.613.931l-.205-.211a.96.96 0 0 0-1.622.434l-.071.286c-.243.97-1.62.97-1.864 0l-.071-.286a.96.96 0 0 0-1.622-.434l-.205.211c-.695.719-1.888.03-1.613-.931l.08-.284a.96.96 0 0 0-1.186-1.187l-.284.081c-.96.275-1.65-.918-.931-1.613l.211-.205a.96.96 0 0 0-.434-1.622l-.286-.071c-.97-.243-.97-1.62 0-1.864l.286-.071a.96.96 0 0 0 .434-1.622l-.211-.205c-.719-.695-.03-1.888.931-1.613l.284.08a.96.96 0 0 0 1.187-1.186l-.081-.284c-.275-.96.918-1.65 1.613-.931l.205.211a.96.96 0 0 0 1.622-.434zM12.973 8.5H8.25l-2.834 3.779A4.998 4.998 0 0 0 12.973 8.5m0-1a4.998 4.998 0 0 0-7.557-3.779l2.834 3.78zM5.048 3.967l-.087.065zm-.431.355A4.98 4.98 0 0 0 3.002 8c0 1.455.622 2.765 1.615 3.678L7.375 8zm.344 7.646.087.065z"/></svg>';
+}
 function renderToolBoxWebview(webview: vscode.Webview, model: ToolBoxViewModel): string {
   const nonce = createNonce();
   const reverseActions = model.reverseTunnel.actions
     .map((action) => {
       const classes = ['action'];
       if (action.id === 'toggle') {
-        classes.push('primary');
+        classes.push(proxyState === 'connected' ? 'danger' : 'success');
       }
-      const icon = action.id === 'toggle'
-        ? (model.reverseTunnel.tone === 'connected' ? '\u25A0' : '\u25B6')
-        : action.id === 'logs'
-          ? '\u2261'
-          : '\u2699';
-      return '<button class="' + classes.join(' ') + '" data-action="' + escapeHtml(action.id) + '" ' + (action.enabled ? '' : 'disabled') + '><span class="action-icon">' + icon + '</span><span>' + escapeHtml(action.label) + '</span></button>';
+      const icon = getReverseTunnelActionIconSvg(action.id);
+      return '<button class="' + classes.join(' ') + '" data-action="' + escapeHtml(action.id) + '" title="' + escapeHtml(action.label) + '" aria-label="' + escapeHtml(action.label) + '" ' + (action.enabled ? '' : 'disabled') + '><span class="action-icon" aria-hidden="true">' + icon + '</span></button>';
     })
     .join('');
+
+  const keyToolbar = [
+    '<button id="refresh" class="icon-button" title="' + escapeHtml(model.keyProjects.refreshing ? 'Refreshing...' : 'Refresh') + '" aria-label="' + escapeHtml(model.keyProjects.refreshing ? 'Refreshing...' : 'Refresh') + '" ' + (model.keyProjects.refreshing ? 'disabled' : '') + '><span class="action-icon" aria-hidden="true">' + getKeyProjectsToolbarIconSvg('refresh') + '</span></button>',
+    '<button id="key-settings" class="icon-button secondary" title="Settings" aria-label="Settings"><span class="action-icon" aria-hidden="true">' + getKeyProjectsToolbarIconSvg('settings') + '</span></button>'
+  ].join('');
 
   const keyRows = model.keyProjects.rows
     .map((row) => {
@@ -340,6 +347,33 @@ function renderToolBoxWebview(webview: vscode.Webview, model: ToolBoxViewModel):
       overflow: hidden;
       background: color-mix(in srgb, var(--vscode-editor-background) 86%, transparent);
     }
+    .reverse-block {
+      display: grid;
+      gap: 5px;
+      justify-items: start;
+    }
+    .reverse-title {
+      padding-left: 0;
+      text-align: left;
+    }
+    .reverse-panel {
+      width: 102px;
+      justify-self: start;
+      margin-left: 0;
+      padding: 7px 12px;
+    }
+    .key-block {
+      display: grid;
+      gap: 5px;
+      justify-items: stretch;
+    }
+    .key-title {
+      padding-left: 0;
+      text-align: left;
+    }
+    .key-panel {
+      width: 100%;
+    }
     .panel-head {
       display: flex;
       align-items: flex-start;
@@ -381,24 +415,52 @@ function renderToolBoxWebview(webview: vscode.Webview, model: ToolBoxViewModel):
     .tone.starting { background: var(--vscode-testing-iconQueued); }
     .tone.failed, .dot.dirty { background: var(--vscode-testing-iconFailed); }
     .tone.stopped, .dot.unavailable { background: var(--vscode-disabledForeground); }
-    .actions {
-      display: flex;
-      flex-wrap: wrap;
+    .reverse-bar {
+      width: 102px;
+      display: grid;
+      gap: 7px;
+      align-items: center;
+      justify-items: stretch;
+      margin-top: 0;
+    }
+    .reverse-status {
+      display: inline-flex;
+      align-items: center;
       gap: 8px;
-      padding: 0 12px 12px;
+      min-width: 0;
+      font-size: 13px;
+      font-weight: 600;
+      line-height: 1.1;
+      margin-top: 1px;
+      justify-self: center;
+    }
+    .reverse-status-text {
+      display: inline-flex;
+      align-items: center;
+      transform: translateY(0.5px);
+    }
+    .actions {
+      display: inline-flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      justify-content: flex-start;
+      align-items: center;
+      justify-self: start;
+      margin-top: 0;
     }
     button.action {
       border: 1px solid var(--vscode-button-border, transparent);
       background: var(--vscode-button-secondaryBackground, var(--vscode-button-background));
       color: var(--vscode-button-secondaryForeground, var(--vscode-button-foreground));
       border-radius: 6px;
-      padding: 6px 10px;
+      width: 30px;
+      height: 30px;
+      padding: 0;
       display: inline-flex;
       align-items: center;
-      gap: 8px;
+      justify-content: center;
       cursor: pointer;
-      font-size: 12px;
-      line-height: 1.1;
+      line-height: 1;
     }
     .action-icon {
       width: 14px;
@@ -407,7 +469,7 @@ function renderToolBoxWebview(webview: vscode.Webview, model: ToolBoxViewModel):
       align-items: center;
       justify-content: center;
       color: inherit;
-      opacity: 0.92;
+      opacity: 0.96;
       flex: 0 0 auto;
     }
     .action-icon svg {
@@ -415,14 +477,11 @@ function renderToolBoxWebview(webview: vscode.Webview, model: ToolBoxViewModel):
       height: 14px;
       display: block;
     }
-    .action-label {
-      display: inline-flex;
-      align-items: center;
-      transform: translateY(0.5px);
+    button.action.success .action-icon {
+      color: var(--vscode-testing-iconPassed);
     }
-    button.action.primary {
-      background: var(--vscode-button-background);
-      color: var(--vscode-button-foreground);
+    button.action.danger .action-icon {
+      color: var(--vscode-testing-iconFailed);
     }
     button.action:disabled {
       cursor: default;
@@ -431,21 +490,27 @@ function renderToolBoxWebview(webview: vscode.Webview, model: ToolBoxViewModel):
     .key-toolbar {
       display: flex;
       gap: 8px;
-      padding: 0 12px 12px;
+      padding: 12px 12px 12px;
     }
-    .key-toolbar button {
+    .icon-button {
       border: 1px solid var(--vscode-button-border, transparent);
-      background: var(--vscode-button-background);
-      color: var(--vscode-button-foreground);
+      background: var(--vscode-button-secondaryBackground, var(--vscode-button-background));
+      color: var(--vscode-button-secondaryForeground, var(--vscode-button-foreground));
       border-radius: 6px;
-      padding: 6px 10px;
+      width: 30px;
+      height: 30px;
+      padding: 0;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
       cursor: pointer;
+      line-height: 1;
     }
-    .key-toolbar button.secondary {
+    .icon-button.secondary {
       background: var(--vscode-button-secondaryBackground, var(--vscode-dropdown-background));
       color: var(--vscode-button-secondaryForeground, var(--vscode-dropdown-foreground));
     }
-    .key-toolbar button:disabled {
+    .icon-button:disabled {
       cursor: default;
       opacity: 0.6;
     }
@@ -572,26 +637,21 @@ function renderToolBoxWebview(webview: vscode.Webview, model: ToolBoxViewModel):
 </head>
 <body>
   <div class="stack">
-    <section class="panel reverse-panel">
-      <div class="panel-head">
-        <div class="panel-title">
-          <div class="eyebrow">Reverse Tunnel</div>
-          <div class="headline"><span class="tone ${model.reverseTunnel.tone}"></span>${escapeHtml(model.reverseTunnel.stateLabel)}</div>
+    <section class="reverse-block">
+      <div class="eyebrow reverse-title">Reverse Tunnel</div>
+      <div class="panel reverse-panel">
+        <div class="reverse-bar">
+          <div class="reverse-status"><span class="tone ${model.reverseTunnel.tone}"></span><span class="reverse-status-text">${escapeHtml(model.reverseTunnel.stateLabel)}</span></div>
+          <div class="actions">${reverseActions}</div>
         </div>
       </div>
-      <div class="actions">${reverseActions}</div>
     </section>
-    <section class="panel key-panel">
-      <div class="panel-head">
-        <div class="panel-title">
-          <div class="eyebrow">Key Projects</div>
-        </div>
-      </div>
-      <div class="key-toolbar">
-        <button id="refresh" ${model.keyProjects.refreshing ? 'disabled' : ''}>${model.keyProjects.refreshing ? 'Refreshing...' : 'Refresh'}</button>
-        <button id="key-settings" class="secondary">Settings</button>
-      </div>
-      <div class="key-body">${keyBody}</div>
+    <section class="key-block">
+      <div class="eyebrow key-title">Key Projects</div>
+      <section class="panel key-panel">
+        <div class="key-toolbar">${keyToolbar}</div>
+        <div class="key-body">${keyBody}</div>
+      </section>
     </section>
   </div>
   <div id="detail-popover" class="detail-popover" aria-hidden="true">
