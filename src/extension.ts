@@ -85,6 +85,15 @@ type KeyProjectsCache = {
   statuses: KeyProjectStatus[];
 };
 
+type BatchedSshKeyProjectResult = {
+  configuredRepoName: string;
+  repoPath: string;
+  remoteUrl: string;
+  fetchError: string;
+  statusOutput: string;
+  error: string;
+};
+
 type KeyProjectsViewRow = {
   configuredRepoName: string;
   repoName: string;
@@ -1251,6 +1260,191 @@ function buildRemoteGitCommand(repoPath: string, args: string[]): string {
   return ['git', '-C', quotePosixShellArg(repoPath), ...args].join(' ');
 }
 
+function getKeyProjectRefreshConcurrency(config: KeyProjectsConfig): number {
+  return config.mode === 'ssh' ? 4 : 4;
+}
+
+function getRemoteKeyProjectsBatchToken(): string {
+  return `${Date.now()}-${process.pid}-${Math.random().toString(16).slice(2, 10)}`;
+}
+
+function getRemoteKeyProjectsScriptPath(token: string): string {
+  return `/tmp/mytoolbox-key-projects-script-${token}.sh`;
+}
+
+function getRemoteKeyProjectsRunDir(token: string): string {
+  return `/tmp/mytoolbox-key-projects-run-${token}`;
+}
+
+function buildRemoteKeyProjectsBatchScript(config: KeyProjectsConfig, remoteRunDir: string): string {
+  const repoSpecs = config.repoNames
+    .map((repoName, index) => `${index}|${repoName}`)
+    .join('\n');
+  const jobs = String(Math.max(1, Math.min(getKeyProjectRefreshConcurrency(config), config.repoNames.length || 1)));
+
+  return [
+    '#!/bin/sh',
+    'set -eu',
+    'ROOT_DIR=' + quotePosixShellArg(config.rootDir.replace(/\\/g, '/')),
+    'JOBS=' + quotePosixShellArg(jobs),
+    'RUN_DIR="${KEY_PROJECTS_RUN_DIR:-' + remoteRunDir.replace(/"/g, '\"') + '}"',
+    'REPO_SPECS_FILE="$RUN_DIR/repo-specs.txt"',
+    'mkdir -p "$RUN_DIR"',
+    "cat <<'__MYTB_REPO_SPECS__' > \"$REPO_SPECS_FILE\"",
+    repoSpecs,
+    '__MYTB_REPO_SPECS__',
+    'run_repo() {',
+    '  idx="$1"',
+    '  repo_name="$2"',
+    '  out_file="$RUN_DIR/$idx.out"',
+    '  repo_path="$ROOT_DIR"',
+    '  if [ "$repo_name" != "." ]; then',
+    '    repo_path="$ROOT_DIR/$repo_name"',
+    '  fi',
+    '  remote_url=""',
+    '  fetch_error=""',
+    '  status_output=""',
+    '  error_message=""',
+    '  if remote_url=$(git -C "$repo_path" config --get remote.origin.url 2>/dev/null); then',
+    '    :',
+    '  else',
+    '    remote_url=""',
+    '  fi',
+    '  fetch_tmp="$RUN_DIR/$idx.fetch.err"',
+    '  if git -C "$repo_path" fetch --prune --quiet > /dev/null 2>"$fetch_tmp"; then',
+    '    :',
+    '  else',
+    '    fetch_error=$(cat "$fetch_tmp")',
+    '  fi',
+    '  status_tmp="$RUN_DIR/$idx.status.out"',
+    '  if git -C "$repo_path" status --porcelain=v2 --branch >"$status_tmp" 2>&1; then',
+    '    status_output=$(cat "$status_tmp")',
+    '  else',
+    '    error_message=$(cat "$status_tmp")',
+    '  fi',
+    '  {',
+    '    printf "%s\n" "__MYTB_BEGIN__ $idx $repo_name"',
+    '    printf "%s\n" "__MYTB_FIELD__ repoPath"',
+    '    printf "%s\n" "$repo_path"',
+    '    printf "%s\n" "__MYTB_END_FIELD__ repoPath"',
+    '    printf "%s\n" "__MYTB_FIELD__ remoteUrl"',
+    '    printf "%s\n" "$remote_url"',
+    '    printf "%s\n" "__MYTB_END_FIELD__ remoteUrl"',
+    '    printf "%s\n" "__MYTB_FIELD__ fetchError"',
+    '    printf "%s\n" "$fetch_error"',
+    '    printf "%s\n" "__MYTB_END_FIELD__ fetchError"',
+    '    printf "%s\n" "__MYTB_FIELD__ error"',
+    '    printf "%s\n" "$error_message"',
+    '    printf "%s\n" "__MYTB_END_FIELD__ error"',
+    '    printf "%s\n" "__MYTB_FIELD__ status"',
+    '    printf "%s\n" "$status_output"',
+    '    printf "%s\n" "__MYTB_END_FIELD__ status"',
+    '    printf "%s\n" "__MYTB_END__ $idx $repo_name"',
+    '  } > "$out_file"',
+    '}',
+    'activeJobs=0',
+    'while IFS="|" read -r idx repo_name; do',
+    '  [ -n "$idx" ] || continue',
+    '  run_repo "$idx" "$repo_name" &',
+    '  activeJobs=$((activeJobs + 1))',
+    '  if [ "$activeJobs" -ge "$JOBS" ]; then',
+    '    wait',
+    '    activeJobs=0',
+    '  fi',
+    'done < "$REPO_SPECS_FILE"',
+    'wait',
+    'while IFS="|" read -r idx repo_name; do',
+    '  [ -n "$idx" ] || continue',
+    '  cat "$RUN_DIR/$idx.out"',
+    'done < "$REPO_SPECS_FILE"'
+  ].join('\n') + '\n';
+}
+
+function buildRemoteKeyProjectsBootstrapCommand(remoteScriptPath: string, remoteRunDir: string): string {
+  return `sh -s -- ${quotePosixShellArg(remoteScriptPath)} ${quotePosixShellArg(remoteRunDir)}`;
+}
+
+function buildRemoteKeyProjectsBootstrapScript(batchScript: string): string {
+  return [
+    '#!/bin/sh',
+    'set -eu',
+    'remote_script_path="$1"',
+    'remote_run_dir="$2"',
+    'mkdir -p "$remote_run_dir"',
+    "cat > \"$remote_script_path\" <<'__MYTB_REMOTE_BATCH_SCRIPT__'",
+    batchScript.replace(/\r/g, '').replace(/\n$/, ''),
+    '__MYTB_REMOTE_BATCH_SCRIPT__',
+    'chmod +x "$remote_script_path"',
+    'KEY_PROJECTS_RUN_DIR="$remote_run_dir" "$remote_script_path"'
+  ].join('\n') + '\n';
+}
+function parseBatchedSshKeyProjectResults(output: string): Map<string, BatchedSshKeyProjectResult> {
+  const lines = output.replace(/\r/g, '').split('\n');
+  const results = new Map<string, BatchedSshKeyProjectResult>();
+  let currentRepoName: string | null = null;
+  let currentField: keyof Omit<BatchedSshKeyProjectResult, 'configuredRepoName'> | null = null;
+  let currentFieldLines: string[] = [];
+  let currentResult: BatchedSshKeyProjectResult | null = null;
+
+  const commitField = (): void => {
+    if (!currentResult || !currentField) {
+      return;
+    }
+
+    currentResult[currentField] = currentFieldLines.join('\n').replace(/\n+$/g, '');
+    currentField = null;
+    currentFieldLines = [];
+  };
+
+  for (const line of lines) {
+    const beginMatch = line.match(/^__MYTB_BEGIN__\s+(\d+)\s+(.*)$/);
+    if (beginMatch) {
+      currentRepoName = beginMatch[2];
+      currentResult = {
+        configuredRepoName: currentRepoName,
+        repoPath: '',
+        remoteUrl: '',
+        fetchError: '',
+        statusOutput: '',
+        error: ''
+      };
+      currentField = null;
+      currentFieldLines = [];
+      continue;
+    }
+
+    const fieldMatch = line.match(/^__MYTB_FIELD__\s+(repoPath|remoteUrl|fetchError|error|status)$/);
+    if (fieldMatch && currentResult) {
+      commitField();
+      const fieldName = fieldMatch[1] === 'status' ? 'statusOutput' : fieldMatch[1];
+      currentField = fieldName as keyof Omit<BatchedSshKeyProjectResult, 'configuredRepoName'>;
+      currentFieldLines = [];
+      continue;
+    }
+
+    const endFieldMatch = line.match(/^__MYTB_END_FIELD__\s+(repoPath|remoteUrl|fetchError|error|status)$/);
+    if (endFieldMatch && currentResult) {
+      commitField();
+      continue;
+    }
+
+    const endMatch = line.match(/^__MYTB_END__\s+(\d+)\s+(.*)$/);
+    if (endMatch && currentResult && currentRepoName) {
+      commitField();
+      results.set(currentRepoName, currentResult);
+      currentRepoName = null;
+      currentResult = null;
+      continue;
+    }
+
+    if (currentField) {
+      currentFieldLines.push(line);
+    }
+  }
+
+  return results;
+}
+
 function getKeyProjectsConfigSignature(config: KeyProjectsConfig): string {
   return JSON.stringify({
     mode: config.mode,
@@ -1356,7 +1550,7 @@ function parseGitStatusSummary(output: string): {
   };
 }
 
-function runCommand(command: string, args: string[], timeoutMs = 8000): Promise<string> {
+function runCommandWithInput(command: string, args: string[], input: string | undefined, timeoutMs = 8000): Promise<string> {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args);
     let stdout = '';
@@ -1393,9 +1587,21 @@ function runCommand(command: string, args: string[], timeoutMs = 8000): Promise<
       }
       resolve(stdout.trimEnd());
     });
+
+    child.stdin.on('error', () => {
+      // Ignore broken pipe errors when the remote process exits early.
+    });
+    if (typeof input === 'string') {
+      child.stdin.end(input);
+    } else {
+      child.stdin.end();
+    }
   });
 }
 
+function runCommand(command: string, args: string[], timeoutMs = 8000): Promise<string> {
+  return runCommandWithInput(command, args, undefined, timeoutMs);
+}
 async function runGitForKeyProject(
   config: KeyProjectsConfig,
   repoPath: string,
@@ -1461,8 +1667,98 @@ async function loadKeyProjectStatus(config: KeyProjectsConfig, repoName: string)
   }
 }
 
+async function loadKeyProjectStatusesFromBatchedSsh(config: KeyProjectsConfig): Promise<KeyProjectStatus[]> {
+  const token = getRemoteKeyProjectsBatchToken();
+  const remoteScriptPath = getRemoteKeyProjectsScriptPath(token);
+  const remoteRunDir = getRemoteKeyProjectsRunDir(token);
+  const script = buildRemoteKeyProjectsBatchScript(config, remoteRunDir);
+  const bootstrapScript = buildRemoteKeyProjectsBootstrapScript(script);
+  outputChannel?.appendLine(`[key-projects] batched ssh script=${remoteScriptPath} runDir=${remoteRunDir}`);
+
+  const output = await runCommandWithInput(
+    config.sshPath,
+    config.sshPort === 22
+      ? [config.sshTarget, buildRemoteKeyProjectsBootstrapCommand(remoteScriptPath, remoteRunDir)]
+      : ['-p', String(config.sshPort), config.sshTarget, buildRemoteKeyProjectsBootstrapCommand(remoteScriptPath, remoteRunDir)],
+    bootstrapScript,
+    Math.max(20000, config.repoNames.length * 8000)
+  );
+  const parsedResults = parseBatchedSshKeyProjectResults(output);
+
+  return config.repoNames.map((repoName) => {
+    const repoPath = getRepoPath(config.rootDir, repoName, config.mode);
+    const parsedResult = parsedResults.get(repoName);
+
+    if (!parsedResult) {
+      return {
+        configuredRepoName: repoName,
+        repoName: getRepoDisplayName(repoPath, config.mode),
+        repoPath,
+        branch: 'unknown',
+        syncState: 'unknown' as const,
+        aheadCount: 0,
+        behindCount: 0,
+        shortStatus: '',
+        clean: false,
+        available: false,
+        error: 'Missing batched SSH result.'
+      };
+    }
+
+    const displayName = parseRemoteRepoName(parsedResult.remoteUrl, getRepoDisplayName(parsedResult.repoPath || repoPath, config.mode));
+
+    if (parsedResult.error) {
+      outputChannel?.appendLine(`[key-projects] failed repo=${repoName}: ${parsedResult.error}`);
+      return {
+        configuredRepoName: repoName,
+        repoName: displayName,
+        repoPath: parsedResult.repoPath || repoPath,
+        branch: 'unknown',
+        syncState: 'unknown' as const,
+        aheadCount: 0,
+        behindCount: 0,
+        shortStatus: '',
+        clean: false,
+        available: false,
+        error: parsedResult.error
+      };
+    }
+
+    const parsedStatus = parseGitStatusSummary(parsedResult.statusOutput.trimEnd());
+
+    if (parsedResult.fetchError) {
+      outputChannel?.appendLine(`[key-projects] fetch warning repo=${repoName}: ${parsedResult.fetchError}`);
+    }
+
+    return {
+      configuredRepoName: repoName,
+      repoName: displayName,
+      repoPath: parsedResult.repoPath || repoPath,
+      branch: parsedStatus.branch,
+      upstream: parsedStatus.upstream,
+      syncState: parsedResult.fetchError ? 'unknown' : parsedStatus.syncState,
+      aheadCount: parsedStatus.aheadCount,
+      behindCount: parsedStatus.behindCount,
+      shortStatus: parsedStatus.shortStatus,
+      clean: parsedStatus.clean,
+      available: true,
+      fetchError: parsedResult.fetchError || undefined
+    };
+  });
+}
+
 async function loadKeyProjectStatuses(config: KeyProjectsConfig): Promise<KeyProjectStatus[]> {
   outputChannel?.appendLine(`[key-projects] refresh start count=${config.repoNames.length}`);
+  if (config.mode === 'ssh') {
+    try {
+      return await loadKeyProjectStatusesFromBatchedSsh(config);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      outputChannel?.appendLine(`[key-projects] batched ssh refresh failed: ${message}`);
+      outputChannel?.appendLine('[key-projects] falling back to per-repo ssh refresh.');
+    }
+  }
+
   const statuses: KeyProjectStatus[] = [];
   for (const repoName of config.repoNames) {
     statuses.push(await loadKeyProjectStatus(config, repoName));
