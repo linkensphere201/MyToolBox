@@ -489,8 +489,10 @@ suite('Reverse Proxy Extension Integration Tests', () => {
     assert.ok(!html.includes('<span>Host</span>'), 'Reverse tunnel table header should be removed');
     assert.ok(!html.includes('<span>State</span>'), 'Reverse tunnel table header should be removed');
     assert.ok(!html.includes('<span>Action</span>'), 'Reverse tunnel table header should be removed');
-    assert.ok(html.includes('grid-template-columns: 20ch 48px 54px;'), 'Host column should fit max IPv4 plus four-digit port');
+    assert.ok(html.includes('grid-template-columns: 20ch minmax(16px, 1fr) 48px 54px;'), 'Right controls should sit after a flexible spacer');
     assert.ok(html.includes('width: 20ch;'), 'Host code should fit max IPv4 plus four-digit port');
+    assert.ok(html.includes('grid-column: 3;'), 'State and tooltip cell should be moved after the spacer');
+    assert.ok(html.includes('grid-column: 4;'), 'Action button should be moved after the spacer');
     assert.ok(html.includes('class="rt-host-code">10.99.0.1:4001</code>'), 'Host should render with inline-code styling');
     assert.ok(html.includes('class="rt-state-icon stopped"'), 'Stopped state should render as icon class');
     assert.ok(html.includes('class="rt-info-icon"'), 'Info icon should be rendered next to state icon');
@@ -499,6 +501,7 @@ suite('Reverse Proxy Extension Integration Tests', () => {
     assert.ok(html.includes('target: yangweijian@10.99.0.1'), 'Info tooltip should include remote target details');
     assert.ok(html.includes('external: no'), 'Info tooltip should include external state');
     assert.ok(html.includes('overflow: visible;'), 'State cell should not clip the custom tooltip');
+    assert.ok(html.includes('z-index: 60;'), 'Hovered tooltip trigger should sit above adjacent controls');
     assert.ok(!html.includes('>Stopped</span></span>'), 'State text should not be visible in the state cell');
   });
 

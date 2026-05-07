@@ -707,7 +707,7 @@ function renderToolBoxWebview(webview: vscode.Webview, model: ToolBoxViewModel):
     }
     .rt-row {
       display: grid;
-      grid-template-columns: 20ch 48px 54px;
+      grid-template-columns: 20ch minmax(16px, 1fr) 48px 54px;
       gap: 8px;
       align-items: center;
       box-sizing: border-box;
@@ -748,6 +748,7 @@ function renderToolBoxWebview(webview: vscode.Webview, model: ToolBoxViewModel):
       line-height: 1.45;
     }
     .rt-state {
+      grid-column: 3;
       display: inline-flex;
       gap: 6px;
       align-items: center;
@@ -784,6 +785,7 @@ function renderToolBoxWebview(webview: vscode.Webview, model: ToolBoxViewModel):
     .rt-info-icon:focus {
       opacity: 1;
       color: var(--vscode-foreground);
+      z-index: 60;
     }
     .rt-info-icon:hover::after,
     .rt-info-icon:focus::after {
@@ -820,6 +822,7 @@ function renderToolBoxWebview(webview: vscode.Webview, model: ToolBoxViewModel):
       pointer-events: none;
     }
     .rt-action {
+      grid-column: 4;
       display: inline-flex;
       justify-content: flex-start;
     }
