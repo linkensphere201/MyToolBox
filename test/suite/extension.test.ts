@@ -469,6 +469,9 @@ suite('Reverse Proxy Extension Integration Tests', () => {
       ['10.99.0.1:4001:Stopped:Start', '10.111.90.10:4001:Stopped:Start']
     );
     assert.ok(model.reverseTunnel.rows[0]?.tooltip.includes('target: yangweijian@10.99.0.1'));
+    assert.ok(model.reverseTunnel.rows[0]?.tooltip.includes('remote: 10.99.0.1:4001'));
+    assert.ok(model.reverseTunnel.rows[0]?.tooltip.includes('state: Stopped'));
+    assert.ok(model.reverseTunnel.rows[0]?.tooltip.includes('external: no'));
     assert.ok(model.reverseTunnel.rows[1]?.tooltip.includes('target: foo@10.111.90.10'));
   });
 
@@ -486,12 +489,16 @@ suite('Reverse Proxy Extension Integration Tests', () => {
     assert.ok(!html.includes('<span>Host</span>'), 'Reverse tunnel table header should be removed');
     assert.ok(!html.includes('<span>State</span>'), 'Reverse tunnel table header should be removed');
     assert.ok(!html.includes('<span>Action</span>'), 'Reverse tunnel table header should be removed');
+    assert.ok(html.includes('grid-template-columns: 20ch 48px 54px;'), 'Host column should fit max IPv4 plus four-digit port');
+    assert.ok(html.includes('width: 20ch;'), 'Host code should fit max IPv4 plus four-digit port');
     assert.ok(html.includes('class="rt-host-code">10.99.0.1:4001</code>'), 'Host should render with inline-code styling');
     assert.ok(html.includes('class="rt-state-icon stopped"'), 'Stopped state should render as icon class');
     assert.ok(html.includes('class="rt-info-icon"'), 'Info icon should be rendered next to state icon');
-    assert.ok(html.includes('data-tooltip="target: yangweijian@10.99.0.1'), 'Info icon should use immediate custom tooltip data');
+    assert.ok(html.includes('data-tooltip="remote: 10.99.0.1:4001'), 'Info icon should use immediate custom tooltip data');
     assert.ok(!html.includes('class="rt-info-icon" title='), 'Info icon should not use delayed native title tooltip');
     assert.ok(html.includes('target: yangweijian@10.99.0.1'), 'Info tooltip should include remote target details');
+    assert.ok(html.includes('external: no'), 'Info tooltip should include external state');
+    assert.ok(html.includes('overflow: visible;'), 'State cell should not clip the custom tooltip');
     assert.ok(!html.includes('>Stopped</span></span>'), 'State text should not be visible in the state cell');
   });
 
@@ -797,6 +804,7 @@ suite('Reverse Proxy Extension Integration Tests', () => {
       assert.strictEqual(items[0]?.description, 'external');
       assert.strictEqual(items[0]?.enabled, false);
       assert.ok(items[0]?.tooltip?.includes('Started externally'));
+      assert.ok(items[0]?.tooltip?.includes('external: yes'));
     } finally {
       delete process.env.RPX_FAKE_MODE;
       if (externalProcess) {

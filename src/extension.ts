@@ -352,16 +352,21 @@ function getReverseTunnelAggregateState(rows: ReverseTunnelViewRow[]): ProxyStat
 }
 
 function formatRemoteTunnelTooltip(remote: RuntimeRemoteProxyConfig, state: RemoteTunnelRuntimeState): string {
+  const isExternal = state.state === 'external';
   const lines = [
+    `remote: ${remote.hostLabel}`,
     `target: ${remote.remoteTarget}`,
     `ssh: ${remote.remoteHost}:${remote.remotePort}`,
     `bind: ${remote.remoteBindPort}`,
     `local: ${remote.reverseSpec.split(':').slice(1).join(':')}`,
-    `state: ${getStateLabel(state.state)}`
+    `state: ${getStateLabel(state.state)}`,
+    `external: ${isExternal ? 'yes' : 'no'}`
   ];
 
-  if (state.externalPid) {
+  if (isExternal && state.externalPid) {
     lines.push(`Started externally, pid=${state.externalPid}`);
+  } else if (isExternal) {
+    lines.push('Started externally');
   } else if (state.sshProcess?.pid) {
     lines.push(`pid: ${state.sshProcess.pid}`);
   }
@@ -538,7 +543,7 @@ function renderToolBoxWebview(webview: vscode.Webview, model: ToolBoxViewModel):
       return [
         '<div class="rt-row">',
         '  <span class="rt-cell rt-host"><code class="rt-host-code">' + escapeHtml(row.hostLabel) + '</code></span>',
-        '  <span class="rt-cell rt-state" title="' + escapeHtml(row.stateLabel) + '" aria-label="' + escapeHtml(row.stateLabel) + '"><span class="rt-state-icon ' + escapeHtml(row.tone) + '">' + stateIcon + '</span><span class="rt-info-icon" data-tooltip="' + tooltip + '" aria-label="Tunnel details">' + infoIcon + '</span></span>',
+        '  <span class="rt-cell rt-state" title="' + escapeHtml(row.stateLabel) + '" aria-label="' + escapeHtml(row.stateLabel) + '"><span class="rt-state-icon ' + escapeHtml(row.tone) + '">' + stateIcon + '</span><span class="rt-info-icon" data-tooltip="' + tooltip + '" tabindex="0" aria-label="Tunnel details">' + infoIcon + '</span></span>',
         '  <span class="rt-cell rt-action">' + actionButton + '</span>',
         '</div>'
       ].join('');
@@ -702,7 +707,7 @@ function renderToolBoxWebview(webview: vscode.Webview, model: ToolBoxViewModel):
     }
     .rt-row {
       display: grid;
-      grid-template-columns: minmax(92px, 1fr) 48px 54px;
+      grid-template-columns: 20ch 48px 54px;
       gap: 8px;
       align-items: center;
       box-sizing: border-box;
@@ -725,10 +730,10 @@ function renderToolBoxWebview(webview: vscode.Webview, model: ToolBoxViewModel):
     .rt-host {
       display: inline-flex;
       align-items: center;
+      width: 20ch;
     }
     .rt-host-code {
-      min-width: 0;
-      max-width: 100%;
+      width: 20ch;
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
@@ -747,6 +752,7 @@ function renderToolBoxWebview(webview: vscode.Webview, model: ToolBoxViewModel):
       gap: 6px;
       align-items: center;
       justify-content: flex-start;
+      overflow: visible;
     }
     .rt-state-icon,
     .rt-info-icon {
@@ -827,12 +833,33 @@ function renderToolBoxWebview(webview: vscode.Webview, model: ToolBoxViewModel):
       color: var(--vscode-button-secondaryForeground, var(--vscode-button-foreground));
       cursor: pointer;
       font: inherit;
+      transition: background-color 120ms ease, border-color 120ms ease, box-shadow 120ms ease, color 120ms ease, transform 120ms ease;
     }
     .rt-action-button.start {
       color: var(--vscode-testing-iconPassed);
     }
     .rt-action-button.stop {
       color: var(--vscode-testing-iconFailed);
+    }
+    .rt-action-button:hover:not(:disabled),
+    .rt-action-button:focus-visible:not(:disabled) {
+      background: color-mix(in srgb, var(--vscode-list-hoverBackground) 82%, var(--vscode-button-secondaryBackground, var(--vscode-button-background)));
+      border-color: color-mix(in srgb, currentColor 52%, var(--vscode-focusBorder));
+      box-shadow: 0 0 0 1px color-mix(in srgb, currentColor 24%, transparent);
+      transform: translateY(-1px);
+      outline: none;
+    }
+    .rt-action-button.start:hover:not(:disabled),
+    .rt-action-button.start:focus-visible:not(:disabled) {
+      background: color-mix(in srgb, var(--vscode-testing-iconPassed) 18%, var(--vscode-button-secondaryBackground, var(--vscode-button-background)));
+    }
+    .rt-action-button.stop:hover:not(:disabled),
+    .rt-action-button.stop:focus-visible:not(:disabled) {
+      background: color-mix(in srgb, var(--vscode-testing-iconFailed) 16%, var(--vscode-button-secondaryBackground, var(--vscode-button-background)));
+    }
+    .rt-action-button:active:not(:disabled) {
+      transform: translateY(0);
+      box-shadow: 0 0 0 1px color-mix(in srgb, currentColor 18%, transparent);
     }
     .rt-action-button:disabled {
       cursor: default;
