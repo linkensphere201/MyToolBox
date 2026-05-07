@@ -4,3 +4,4 @@ node_modules/
 *.vsix
 .npm-cache/
 release-artifacts/
+.vscode
