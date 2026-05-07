@@ -8,6 +8,7 @@ export async function run(): Promise<void> {
     timeout: 20000
   });
 
+  mocha.addFile(path.resolve(__dirname, './pure.test.js'));
   mocha.addFile(path.resolve(__dirname, './extension.test.js'));
 
   await new Promise<void>((resolve, reject) => {

@@ -5,3 +5,5 @@ node_modules/
 .npm-cache/
 release-artifacts/
 .vscode
+src/**/*.js
+src/**/*.js.map
