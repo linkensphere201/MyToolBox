@@ -20,7 +20,8 @@ import {
 } from './pinnedProjects/remoteBatch';
 import {
   getDefaultConfigJsonContent,
-  getRuntimeProxyConfig,
+  getRuntimeProxyConfigFromFileConfig,
+  parseFileProxyConfigContent,
   resolveConfigPathWithContext as resolveConfigPathWithContextCore,
   resolveConfiguredConfigPathWithContext as resolveConfiguredConfigPathWithContextCore
 } from './reverseTunnel/config';
@@ -38,6 +39,7 @@ let keyProjectsRefreshPromise: Promise<void> | null = null;
 const remoteTunnelStates = new Map<string, RemoteTunnelRuntimeState>();
 const LOCAL_TARGET_CONNECT_FAILURE_LOG_INTERVAL_MS = 30_000;
 const LOCAL_TARGET_CONNECT_FAILURE_CONTEXT_MS = 30_000;
+const REVERSE_TUNNEL_STATE_POLL_INTERVAL_MS = 5_000;
 const TOOLBOX_CONFIGURATION_SECTION = 'myToolbox';
 const TOOLBOX_CONFIG_FILE_SETTING = 'configFile';
 const DEFAULT_TOOLBOX_CONFIG_FILE = '.vscode/mytoolbox.config.json';
@@ -209,6 +211,7 @@ type BootstrapToolBoxConfig = {
 
 type ToolBoxConfigPathInfo = {
   configPath: string;
+  configUri: vscode.Uri;
   hasConfiguredPath: boolean;
 };
 
@@ -421,7 +424,7 @@ function formatRemoteTunnelTooltip(remote: RuntimeRemoteProxyConfig, state: Remo
 async function getReverseTunnelViewModel(): Promise<ReverseTunnelViewModel> {
   let config: RuntimeProxyConfig;
   try {
-    config = getConfig();
+    config = await getConfig();
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     return {
@@ -575,10 +578,10 @@ function setRemoteTunnelState(remoteKey: string, state: ProxyState): void {
   void toolBoxWebviewProvider?.refresh();
 }
 
-function getReverseTunnelSidebarItemsForTest(): SidebarTestItem[] {
+async function getReverseTunnelSidebarItemsForTest(): Promise<SidebarTestItem[]> {
   let config: RuntimeProxyConfig;
   try {
-    config = getConfig();
+    config = await getConfig();
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     return [
@@ -726,7 +729,7 @@ async function getSidebarItemsForTest(): Promise<{ root: SidebarTestItem[]; chil
       { kind: 'group', label: 'ReverseTunnel', enabled: false },
       { kind: 'group', label: 'Pinned Projects', enabled: false }
     ],
-    children: [...getReverseTunnelSidebarItemsForTest(), ...(await getKeyProjectSidebarItemsForTest())]
+    children: [...(await getReverseTunnelSidebarItemsForTest()), ...(await getKeyProjectSidebarItemsForTest())]
   };
 }
 
@@ -748,16 +751,12 @@ function isFileNotFoundError(error: unknown): boolean {
 
 async function getKeyProjectsConfig(workspacePath?: string): Promise<KeyProjectsConfig> {
   void workspacePath;
-  const toolBoxConfig = vscode.workspace.getConfiguration(TOOLBOX_CONFIGURATION_SECTION);
-  const configuredPath = toolBoxConfig.get<string>(TOOLBOX_CONFIG_FILE_SETTING, DEFAULT_TOOLBOX_CONFIG_FILE);
-  const configPath = resolveConfiguredConfigPath(configuredPath);
-  const configUri = vscode.Uri.file(configPath);
+  const { configPath, configUri } = getConfiguredConfigFileRef();
 
   let parsed: Record<string, unknown> | null = null;
 
   try {
-    const bytes = await vscode.workspace.fs.readFile(configUri);
-    const rawText = Buffer.from(bytes).toString('utf8');
+    const rawText = await readConfigText(configUri);
     const raw = JSON.parse(rawText) as unknown;
     if (!raw || typeof raw !== 'object') {
       throw new Error(`Invalid config file '${configUri.toString()}': root must be a JSON object.`);
@@ -797,11 +796,10 @@ async function getKeyProjectsConfig(workspacePath?: string): Promise<KeyProjects
 }
 
 async function readToolBoxConfigRoot(configPath: string, allowMissing: boolean): Promise<Record<string, unknown> | null> {
-  const configUri = vscode.Uri.file(configPath);
+  const configUri = getToolBoxConfigUriFromPath(configPath);
 
   try {
-    const bytes = await vscode.workspace.fs.readFile(configUri);
-    const rawText = Buffer.from(bytes).toString('utf8');
+    const rawText = await readConfigText(configUri);
     const raw = JSON.parse(rawText) as unknown;
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
       throw new Error(`Invalid config file '${configUri.toString()}': root must be a JSON object.`);
@@ -824,9 +822,7 @@ function resolvePathFromConfigDir(configPath: string, value: string): string {
 }
 
 async function getFavoriteWorkspacesConfig(): Promise<FavoriteWorkspacesConfig> {
-  const toolBoxConfig = vscode.workspace.getConfiguration(TOOLBOX_CONFIGURATION_SECTION);
-  const configuredPath = toolBoxConfig.get<string>(TOOLBOX_CONFIG_FILE_SETTING, DEFAULT_TOOLBOX_CONFIG_FILE);
-  const configPath = resolveConfiguredConfigPath(configuredPath);
+  const { configPath } = getConfiguredConfigFileRef();
   const parsed = await readToolBoxConfigRoot(configPath, true);
   const section =
     parsed && parsed.favoriteWorkspaces && typeof parsed.favoriteWorkspaces === 'object' && !Array.isArray(parsed.favoriteWorkspaces)
@@ -1491,13 +1487,82 @@ function resolveConfiguredConfigPath(configFile: string): string {
   return resolveConfiguredConfigPathWithContext(configFile);
 }
 
+function getConfiguredConfigUri(configFile: string): vscode.Uri {
+  const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+  const workspaceTokenMatch = configFile.match(/^\$\{workspace(?:Folder|Root)\}(?:[\\/](.*))?$/i);
+  if (workspaceTokenMatch) {
+    if (!workspaceFolder) {
+      throw new Error('Workspace folder is required to resolve ${workspaceFolder} in config path.');
+    }
+    const relativePath = workspaceTokenMatch[1] ?? '';
+    return relativePath
+      ? vscode.Uri.joinPath(workspaceFolder.uri, ...relativePath.split(/[\\/]+/).filter(Boolean))
+      : workspaceFolder.uri;
+  }
 
+  if (path.isAbsolute(configFile)) {
+    return vscode.Uri.file(configFile);
+  }
 
-function getConfig(): RuntimeProxyConfig {
+  if (workspaceFolder) {
+    return vscode.Uri.joinPath(workspaceFolder.uri, ...configFile.split(/[\\/]+/).filter(Boolean));
+  }
+
+  return vscode.Uri.file(path.join(os.homedir(), configFile));
+}
+
+function getConfiguredConfigFileRef(): { configPath: string; configUri: vscode.Uri } {
   const config = vscode.workspace.getConfiguration(TOOLBOX_CONFIGURATION_SECTION);
   const configFile = config.get<string>(TOOLBOX_CONFIG_FILE_SETTING, DEFAULT_TOOLBOX_CONFIG_FILE);
-  const configPath = resolveConfigPath(configFile);
-  return getRuntimeProxyConfig(configPath);
+  const configUri = getConfiguredConfigUri(configFile);
+  return {
+    configPath: normalizeDisplayFsPath(configUri.fsPath) || configUri.toString(),
+    configUri
+  };
+}
+
+function normalizeDisplayFsPath(fsPath: string): string {
+  return fsPath.replace(/^([a-z]):/, (match, drive: string) => `${drive.toUpperCase()}:`);
+}
+
+async function readConfigText(configUri: vscode.Uri): Promise<string> {
+  const bytes = await vscode.workspace.fs.readFile(configUri);
+  return Buffer.from(bytes).toString('utf8');
+}
+
+function getToolBoxConfigUriFromPath(configPath: string): vscode.Uri {
+  const current = getConfiguredConfigFileRef();
+  if (current.configPath === configPath) {
+    return current.configUri;
+  }
+  return vscode.Uri.file(configPath);
+}
+
+async function configFileExists(configUri: vscode.Uri): Promise<boolean> {
+  try {
+    await vscode.workspace.fs.stat(configUri);
+    return true;
+  } catch (error) {
+    if (isFileNotFoundError(error)) {
+      return false;
+    }
+    throw error;
+  }
+}
+
+async function getConfig(): Promise<RuntimeProxyConfig> {
+  const { configPath, configUri } = getConfiguredConfigFileRef();
+  try {
+    return getRuntimeProxyConfigFromFileConfig(
+      parseFileProxyConfigContent(await readConfigText(configUri), configUri.toString()),
+      configPath
+    );
+  } catch (error) {
+    if (isFileNotFoundError(error)) {
+      throw new Error(`Config file not found: ${configUri.toString()}`);
+    }
+    throw error;
+  }
 }
 
 function verifySshExists(sshPath: string): Promise<void> {
@@ -1687,7 +1752,7 @@ async function syncProxyStateFromSystem(config?: RuntimeProxyConfig): Promise<bo
   let runtimeConfig = config;
   if (!runtimeConfig) {
     try {
-      runtimeConfig = getConfig();
+      runtimeConfig = await getConfig();
     } catch {
       return false;
     }
@@ -1733,7 +1798,7 @@ function getRuntimeRemote(config: RuntimeProxyConfig, remoteKey: string): Runtim
 async function startRemoteTunnel(remoteKey: string): Promise<void> {
   let config: RuntimeProxyConfig;
   try {
-    config = getConfig();
+    config = await getConfig();
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     outputChannel.appendLine(`[error] ${message}`);
@@ -1963,6 +2028,25 @@ function disposeReverseTunnelState(): void {
   remoteTunnelStates.clear();
 }
 
+function startReverseTunnelStatePolling(context: vscode.ExtensionContext): void {
+  let polling = false;
+  const timer = setInterval(() => {
+    if (polling) {
+      return;
+    }
+
+    polling = true;
+    void reverseTunnelService?.syncStateFromSystem()
+      .finally(() => {
+        polling = false;
+      });
+  }, REVERSE_TUNNEL_STATE_POLL_INTERVAL_MS);
+
+  context.subscriptions.push(new vscode.Disposable(() => {
+    clearInterval(timer);
+  }));
+}
+
 function getToolBoxConfigPathInfo(): ToolBoxConfigPathInfo {
   const toolBoxConfig = vscode.workspace.getConfiguration(TOOLBOX_CONFIGURATION_SECTION);
   const inspected = toolBoxConfig.inspect<string>(TOOLBOX_CONFIG_FILE_SETTING);
@@ -1973,18 +2057,21 @@ function getToolBoxConfigPathInfo(): ToolBoxConfigPathInfo {
     || inspected?.globalLanguageValue !== undefined
     || inspected?.workspaceLanguageValue !== undefined
     || inspected?.workspaceFolderLanguageValue !== undefined;
-  const configuredPath = toolBoxConfig.get<string>(TOOLBOX_CONFIG_FILE_SETTING, DEFAULT_TOOLBOX_CONFIG_FILE);
+  const { configPath, configUri } = getConfiguredConfigFileRef();
 
   return {
-    configPath: resolveConfiguredConfigPath(configuredPath),
+    configPath,
+    configUri,
     hasConfiguredPath
   };
 }
 
-async function writeToolBoxConfigFile(configPath: string, config: BootstrapToolBoxConfig | unknown): Promise<void> {
-  await vscode.workspace.fs.createDirectory(vscode.Uri.file(path.dirname(configPath)));
+async function writeToolBoxConfigFile(configPath: string, config: BootstrapToolBoxConfig | unknown, configUri?: vscode.Uri): Promise<void> {
+  const uri = configUri ?? getToolBoxConfigUriFromPath(configPath);
+  const parentUri = vscode.Uri.joinPath(uri, '..');
+  await vscode.workspace.fs.createDirectory(parentUri);
   await vscode.workspace.fs.writeFile(
-    vscode.Uri.file(configPath),
+    uri,
     Buffer.from(JSON.stringify(config, null, 2) + '\n', 'utf8')
   );
 }
@@ -2003,21 +2090,26 @@ function getFavoriteWorkspaceFilesForUpdate(root: Record<string, unknown>): stri
 }
 
 async function writeFavoriteWorkspaceFiles(configPath: string, workspaceFiles: string[]): Promise<void> {
+  const { configUri } = getToolBoxConfigPathInfo();
   const root = await readToolBoxConfigRootForUpdate(configPath);
   root.favoriteWorkspaces = { workspaceFiles };
-  await writeToolBoxConfigFile(configPath, root);
+  await writeToolBoxConfigFile(configPath, root, configUri);
   await updateToolBoxConfigFileSetting(configPath);
   await refreshToolBoxAfterConfigChange();
 }
 
 async function updateToolBoxConfigFileSetting(configPath: string): Promise<void> {
+  const configInfo = getToolBoxConfigPathInfo();
+  if (configInfo.hasConfiguredPath || configInfo.configUri.scheme !== 'file') {
+    return;
+  }
   await vscode.workspace
     .getConfiguration(TOOLBOX_CONFIGURATION_SECTION)
     .update(TOOLBOX_CONFIG_FILE_SETTING, configPath, vscode.ConfigurationTarget.Global);
 }
 
 async function openToolBoxConfigFile(configPath: string): Promise<string> {
-  const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(configPath));
+  const doc = await vscode.workspace.openTextDocument(getToolBoxConfigUriFromPath(configPath));
   await vscode.window.showTextDocument(doc, { preview: false });
   return configPath;
 }
@@ -2251,9 +2343,9 @@ async function refreshToolBoxAfterConfigChange(): Promise<void> {
 }
 
 async function bootstrapConfig(): Promise<string | undefined> {
-  const { configPath } = getToolBoxConfigPathInfo();
+  const { configPath, configUri } = getToolBoxConfigPathInfo();
 
-  if (fs.existsSync(configPath)) {
+  if (await configFileExists(configUri)) {
     const confirmation = await vscode.window.showWarningMessage(
       'Overwrite existing ToolBox config?',
       { modal: true },
@@ -2269,7 +2361,7 @@ async function bootstrapConfig(): Promise<string | undefined> {
     return undefined;
   }
 
-  await writeToolBoxConfigFile(configPath, config);
+  await writeToolBoxConfigFile(configPath, config, configUri);
   await updateToolBoxConfigFileSetting(configPath);
   await refreshToolBoxAfterConfigChange();
   void vscode.window.showInformationMessage(`ToolBox config file created: ${configPath}`);
@@ -2277,9 +2369,9 @@ async function bootstrapConfig(): Promise<string | undefined> {
 }
 
 async function openSettingsConfig(): Promise<string | undefined> {
-  const { configPath, hasConfiguredPath } = getToolBoxConfigPathInfo();
+  const { configPath, configUri, hasConfiguredPath } = getToolBoxConfigPathInfo();
 
-  if (!fs.existsSync(configPath)) {
+  if (!(await configFileExists(configUri))) {
     const action = await vscode.window.showQuickPick(['Create default config', 'Run bootstrap wizard'], {
       placeHolder: 'ToolBox config does not exist.'
     });
@@ -2290,7 +2382,7 @@ async function openSettingsConfig(): Promise<string | undefined> {
       return bootstrapConfig();
     }
 
-    await writeToolBoxConfigFile(configPath, JSON.parse(getDefaultConfigJsonContent()));
+    await writeToolBoxConfigFile(configPath, JSON.parse(getDefaultConfigJsonContent()), configUri);
     await updateToolBoxConfigFileSetting(configPath);
     await refreshToolBoxAfterConfigChange();
     void vscode.window.showInformationMessage(`ToolBox config file created: ${configPath}`);
@@ -2405,6 +2497,7 @@ export function activate(context: vscode.ExtensionContext): void {
   }
 
   void reverseTunnelService.syncStateFromSystem();
+  startReverseTunnelStatePolling(context);
 
   const toolBoxWebviewRegistration = vscode.window.registerWebviewViewProvider(ToolBoxWebviewProvider.viewType, toolBoxWebviewProvider);
 

@@ -1,6 +1,6 @@
 export type ReverseTunnelServiceDeps = {
   getViewModel: () => Promise<unknown>;
-  getSidebarItemsForTest: () => unknown[];
+  getSidebarItemsForTest: () => Promise<unknown[]>;
   syncStateFromSystem: () => Promise<boolean>;
   start: (remoteKey: string) => Promise<void>;
   stop: (remoteKey: string) => void;
@@ -16,7 +16,7 @@ export class ReverseTunnelService {
     return this.deps.getViewModel();
   }
 
-  getSidebarItemsForTest(): unknown[] {
+  getSidebarItemsForTest(): Promise<unknown[]> {
     return this.deps.getSidebarItemsForTest();
   }
 

@@ -42,15 +42,16 @@ export function getRemoteKey(remote: Pick<RemoteProxyConfig, 'remoteUser' | 'rem
 }
 
 export function resolveConfiguredConfigPathWithContext(configFile: string, options?: ResolvePathOptions): string {
+  const expanded = expandWorkspaceFolderToken(configFile, options?.workspaceFolder);
+  configFile = expanded;
   if (path.isAbsolute(configFile)) {
     return configFile;
   }
 
   const workspaceFolder = options?.workspaceFolder;
-  const remoteName = options?.remoteName;
   const homeDir = options?.homeDir;
 
-  if (!remoteName && workspaceFolder) {
+  if (workspaceFolder) {
     return path.join(workspaceFolder, configFile);
   }
 
@@ -62,57 +63,39 @@ export function resolveConfiguredConfigPathWithContext(configFile: string, optio
 }
 
 export function resolveConfigPathWithContext(configFile: string, options: ResolvePathOptions): string {
-  if (path.isAbsolute(configFile)) {
-    return configFile;
-  }
-
-  const workspaceFolder = options.workspaceFolder;
-  const remoteName = options.remoteName;
-  const homeDir = options.homeDir;
-  const extensionPath = options.extensionPath;
-
-  if (!remoteName && workspaceFolder) {
-    const workspacePath = path.join(workspaceFolder, configFile);
-    if (fs.existsSync(workspacePath)) {
-      return workspacePath;
-    }
-  }
-
-  if (homeDir) {
-    const homePath = path.join(homeDir, configFile);
-    if (fs.existsSync(homePath)) {
-      return homePath;
-    }
-  }
-
-  if (!extensionPath) {
-    throw new Error('Extension context is not initialized.');
-  }
-
-  return path.join(extensionPath, 'resources', 'mytoolbox.config.json');
+  return resolveConfiguredConfigPathWithContext(configFile, options);
 }
 
-export function loadFileProxyConfig(filePath: string): FileProxyConfig {
-  if (!fs.existsSync(filePath)) {
-    throw new Error(`Config file not found: ${filePath}`);
+function expandWorkspaceFolderToken(configFile: string, workspaceFolder?: string): string {
+  const match = configFile.match(/^\$\{workspace(?:Folder|Root)\}(?:[\\/](.*))?$/i);
+  if (!match) {
+    return configFile;
+  }
+  if (!workspaceFolder) {
+    throw new Error('Workspace folder is required to resolve ${workspaceFolder} in config path.');
   }
 
+  const relativePath = match[1] ?? '';
+  return relativePath ? path.join(workspaceFolder, relativePath) : workspaceFolder;
+}
+
+export function parseFileProxyConfigContent(content: string, source: string): FileProxyConfig {
   let raw: unknown;
   try {
-    raw = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+    raw = JSON.parse(content);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    throw new Error(`Failed to parse config file '${filePath}': ${message}`);
+    throw new Error(`Failed to parse config file '${source}': ${message}`);
   }
 
   if (!raw || typeof raw !== 'object') {
-    throw new Error(`Invalid config file '${filePath}': root must be a JSON object.`);
+    throw new Error(`Invalid config file '${source}': root must be a JSON object.`);
   }
 
   const root = raw as Record<string, unknown>;
   const section = root.ReverseTunnel;
   if (!section || typeof section !== 'object') {
-    throw new Error(`Invalid config file '${filePath}': missing object field 'ReverseTunnel'.`);
+    throw new Error(`Invalid config file '${source}': missing object field 'ReverseTunnel'.`);
   }
 
   const data = section as Record<string, unknown>;
@@ -152,9 +135,14 @@ export function loadFileProxyConfig(filePath: string): FileProxyConfig {
   };
 }
 
-export function getRuntimeProxyConfig(configPath: string): RuntimeProxyConfig {
-  const fileConfig = loadFileProxyConfig(configPath);
+export function loadFileProxyConfig(filePath: string): FileProxyConfig {
+  if (!fs.existsSync(filePath)) {
+    throw new Error(`Config file not found: ${filePath}`);
+  }
+  return parseFileProxyConfigContent(fs.readFileSync(filePath, 'utf8'), filePath);
+}
 
+export function getRuntimeProxyConfigFromFileConfig(fileConfig: FileProxyConfig, configPath: string): RuntimeProxyConfig {
   return {
     sshPath: fileConfig.sshPath,
     connectionReadyDelayMs: fileConfig.connectionReadyDelayMs,
@@ -169,6 +157,10 @@ export function getRuntimeProxyConfig(configPath: string): RuntimeProxyConfig {
       reverseSpec: `${remote.remoteBindPort}:${fileConfig.localHost}:${fileConfig.localPort}`
     }))
   };
+}
+
+export function getRuntimeProxyConfig(configPath: string): RuntimeProxyConfig {
+  return getRuntimeProxyConfigFromFileConfig(loadFileProxyConfig(configPath), configPath);
 }
 
 export function getDefaultConfigJsonContent(): string {

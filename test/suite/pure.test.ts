@@ -102,7 +102,7 @@ suite('Pure Module Tests', () => {
     assert.deepStrictEqual(parsed.remotes, []);
   });
 
-  test('reverse tunnel path resolution should prefer workspace in local mode', () => {
+  test('reverse tunnel path resolution should use workspace and expand workspace variables', () => {
     const { resolveConfiguredConfigPathWithContext, resolveConfigPathWithContext } = require('../reverseTunnel/config') as any;
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mytoolbox-path-test-'));
     const extensionPath = path.join(dir, 'extension');
@@ -123,5 +123,13 @@ suite('Pure Module Tests', () => {
 
     assert.strictEqual(resolveConfiguredConfigPathWithContext(relativeConfigName, options), workspaceConfigPath);
     assert.strictEqual(resolveConfigPathWithContext(relativeConfigName, options), workspaceConfigPath);
+    assert.strictEqual(resolveConfiguredConfigPathWithContext('${workspaceFolder}/.vscode/mytoolbox.config.json', {
+      ...options,
+      remoteName: 'ssh-remote'
+    }), workspaceConfigPath);
+    assert.strictEqual(resolveConfigPathWithContext(relativeConfigName, {
+      ...options,
+      remoteName: 'ssh-remote'
+    }), workspaceConfigPath);
   });
 });

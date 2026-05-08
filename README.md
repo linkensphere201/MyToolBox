@@ -30,11 +30,22 @@ CodeOps Panel is a VS Code sidebar dashboard for local development operations. I
 3. Click `Bootstrap` to create a configuration file, or click `Settings` to open the configured file.
 4. Use `Start`, `Stop`, `Refresh`, and `Add` from the sidebar panel.
 
-The default configuration path is `.vscode/mytoolbox.config.json`. You can override it with the VS Code setting `myToolbox.configFile`.
+The default configuration path is `.vscode/mytoolbox.config.json`. You can override it with the VS Code setting `myToolbox.configFile`. For per-workspace configs, use:
+
+```json
+"myToolbox.configFile": "${workspaceFolder}/.vscode/mytoolbox.config.json"
+```
 
 ## Configuration
 
-CodeOps Panel uses a single JSON file with three top-level sections:
+CodeOps Panel uses a single JSON file with three top-level sections. `myToolbox.configFile` accepts absolute paths, relative paths, and `${workspaceFolder}`:
+
+- `${workspaceFolder}/.vscode/mytoolbox.config.json` resolves to the current workspace folder.
+- Relative paths such as `.vscode/mytoolbox.config.json` also resolve from the current workspace folder when a workspace is open.
+- In Remote SSH windows, workspace-relative paths are read and written through VS Code's workspace filesystem, so the config file lives in the remote workspace.
+- There is no built-in fallback config. If the target file does not exist, use `Settings` or `Bootstrap` to create it.
+
+Example config:
 
 ```json
 {
@@ -68,6 +79,16 @@ CodeOps Panel uses a single JSON file with three top-level sections:
 }
 ```
 
+### UI Host Mode
+
+CodeOps Panel runs as a VS Code UI extension. In local windows this is the same machine as the workspace. In Remote SSH windows, the webview can read and write workspace-relative config files through VS Code, but helper processes are still started from the local UI Host:
+
+- Reverse tunnel `ssh` processes use the local `ReverseTunnel.sshPath`.
+- Pinned Projects `local` mode runs local `gitPath` against a local `rootDir`.
+- Pinned Projects `ssh` mode runs local `sshPath` against `sshTarget`, then runs Git on that remote target.
+
+Use `keyProjects.mode: "ssh"` for remote project status when the opened workspace is remote or when repositories live on another host.
+
 ### Reverse Tunnel Proxies
 
 Each remote maps to an SSH reverse tunnel equivalent to:
@@ -82,21 +103,21 @@ The extension checks that the local `ssh` command is available before starting a
 
 Pinned Projects can run in `local` or `ssh` mode.
 
-- `local`: checks repositories under `rootDir` on the local machine.
-- `ssh`: runs Git checks through local SSH against `sshTarget`.
+- `local`: checks repositories under `rootDir` on the local UI Host.
+- `ssh`: runs local SSH against `sshTarget` and checks repositories under `rootDir` on that remote host.
 
 Refresh runs Git status checks and shows clean/dirty state plus upstream sync labels such as `synced`, `ahead`, `behind`, `diverged`, and `no upstream`.
 
 ### Favorite Workspaces
 
-Use `Add` to select a `.code-workspace` file. The card opens that workspace in a new VS Code window. Relative paths configured by hand are resolved from the configuration file directory.
+Use `Add` to select a `.code-workspace` file. The card opens that workspace in a new VS Code window. Add/remove writes the `favoriteWorkspaces.workspaceFiles` list back to the configured ToolBox JSON file. Relative paths configured by hand are resolved from the configuration file directory.
 
 ## Troubleshooting
 
 - If Git status is unavailable, confirm that `rootDir` and `repoNames` point to real Git repositories.
 - If SSH mode fails, confirm that `sshPath` works locally, `sshTarget` is reachable, and Git is installed on the remote host.
 - If a tunnel fails to start, check whether the remote bind port is already in use and whether `localHost:localPort` is reachable.
-- If the settings file does not open, confirm the `myToolbox.configFile` path. Relative paths resolve differently in local and Remote SSH windows.
+- If the settings file does not open, confirm the `myToolbox.configFile` path. Use `${workspaceFolder}/.vscode/mytoolbox.config.json` when each workspace should own its own config.
 
 ## Limitations
 

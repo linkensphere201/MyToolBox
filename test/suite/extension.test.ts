@@ -476,7 +476,7 @@ suite('CodeOps Panel Extension Integration Tests', () => {
     assert.strictEqual(manifest.contributes?.views?.reverseProxy?.[0]?.name, 'CodeOps Panel');
   });
 
-  test('path resolution should use local home in remote mode and workspace in local mode', async () => {
+  test('path resolution should use workspace in local and remote mode', async () => {
     const localWorkspace = path.join(testDir, 'workspace-local');
     const localHome = path.join(testDir, 'home-local');
     const fakeExtension = path.join(testDir, 'fake-extension');
@@ -512,8 +512,19 @@ suite('CodeOps Panel Extension Integration Tests', () => {
       extensionPath: fakeExtension
     })) as { loadPath: string; configuredPath: string };
 
-    assert.strictEqual(remoteResult.loadPath, homeConfigPath);
-    assert.strictEqual(remoteResult.configuredPath, homeConfigPath);
+    assert.strictEqual(remoteResult.loadPath, workspaceConfigPath);
+    assert.strictEqual(remoteResult.configuredPath, workspaceConfigPath);
+
+    const tokenResult = (await vscode.commands.executeCommand('reverseProxy.test.resolvePaths', {
+      configFile: '${workspaceFolder}/.vscode/mytoolbox.config.json',
+      workspaceFolder: localWorkspace,
+      remoteName: 'ssh-remote',
+      homeDir: localHome,
+      extensionPath: fakeExtension
+    })) as { loadPath: string; configuredPath: string };
+
+    assert.strictEqual(tokenResult.loadPath, workspaceConfigPath);
+    assert.strictEqual(tokenResult.configuredPath, workspaceConfigPath);
   });
 
   test('sidebar should expose reverse tunnel and key project groups', async () => {
