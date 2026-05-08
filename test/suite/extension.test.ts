@@ -196,8 +196,8 @@ suite('CodeOps Panel Extension Integration Tests', () => {
   };
 
   suiteSetup(async () => {
-    const extension = vscode.extensions.getExtension('local.code-ops-panel-extension');
-    assert.ok(extension, 'Extension local.code-ops-panel-extension should be installed for tests');
+    const extension = vscode.extensions.getExtension('YangWeijian.code-ops-panel-extension');
+    assert.ok(extension, 'Extension YangWeijian.code-ops-panel-extension should be installed for tests');
     await extension!.activate();
 
     originalConfigFile = config.get<string>('configFile', '.vscode/mytoolbox.config.json');

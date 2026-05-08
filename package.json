@@ -3,7 +3,7 @@
   "displayName": "CodeOps Panel",
   "description": "CodeOps dashboard panel for reverse tunnels and pinned project status.",
   "version": "0.1.0",
-  "publisher": "local",
+  "publisher": "YangWeijian",
   "license": "MIT",
   "icon": "media/Icon1.png",
   "repository": {
