@@ -3,9 +3,10 @@
 ## Project Overview
 - This repository is a VS Code extension named `code-ops-panel-extension` / `CodeOps Panel`.
 - The extension runs as `extensionKind: ["ui"]`; SSH and Git helper processes should be treated as local UI-host processes unless the code explicitly shells into a remote target.
-- The current user-facing CodeOps Panel webview contains two areas:
+- The current user-facing CodeOps Panel webview contains three areas:
   - `Reverse Tunnel Proxies` for SSH reverse tunnels.
   - `Pinned Projects` for configured Git repository health checks.
+  - `Favorite Workspaces` for saved `.code-workspace` files.
 
 ## Important Files
 - `src/app.ts` wires activation, commands, status bars, config loading, process execution, and test-only commands.
@@ -47,6 +48,7 @@ npm run package:vsix
 - A relative `myToolbox.configFile` resolves from the workspace in local windows, from the local home directory in remote-ssh windows, then falls back to `resources/mytoolbox.config.json` for loading.
 - Reverse tunnel JSON must contain a top-level `ReverseTunnel` object.
 - Pinned Projects config lives in the same `myToolbox.configFile` JSON as a top-level `keyProjects` object.
+- Favorite Workspaces config lives in the same JSON as top-level `favoriteWorkspaces.workspaceFiles`.
 - `keyProjects` uses `mode`, `rootDir`, `repoNames`, `sshTarget`, `sshPort`, `gitPath`, and `sshPath`.
 - In `keyProjects.mode === "ssh"`, Git checks run through local `sshPath` against `sshTarget`; otherwise they run locally through `gitPath`.
 

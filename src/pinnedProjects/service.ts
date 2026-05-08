@@ -1,6 +1,5 @@
 export type PinnedProjectsServiceDeps = {
   getViewModel: () => Promise<unknown>;
-  updateStatusBar: () => Promise<void>;
   refresh: () => Promise<void>;
   invalidateCache: (reason: string) => void;
   openSettings: (workspacePath?: string) => Promise<string>;
@@ -14,10 +13,6 @@ export class PinnedProjectsService {
 
   getViewModel(): Promise<unknown> {
     return this.deps.getViewModel();
-  }
-
-  updateStatusBar(): Promise<void> {
-    return this.deps.updateStatusBar();
   }
 
   refresh(): Promise<void> {

@@ -18,7 +18,6 @@
     "ui"
   ],
   "activationEvents": [
-    "onCommand:reverseProxy.showStatus",
     "onCommand:reverseProxy.showLogs",
     "onCommand:reverseProxy.openSettings",
     "onCommand:reverseProxy.bootstrapConfig",
@@ -29,10 +28,6 @@
   "main": "./out/extension.js",
   "contributes": {
     "commands": [
-      {
-        "command": "reverseProxy.showStatus",
-        "title": "CodeOps Panel: Show Status"
-      },
       {
         "command": "reverseProxy.showLogs",
         "title": "CodeOps Panel: Show Logs"

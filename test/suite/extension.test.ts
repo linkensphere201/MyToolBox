@@ -75,7 +75,8 @@ suite('CodeOps Panel Extension Integration Tests', () => {
               }
             ]
           },
-          keyProjects: readTestConfig().keyProjects ?? getDefaultKeyProjectsConfig()
+          keyProjects: readTestConfig().keyProjects ?? getDefaultKeyProjectsConfig(),
+          favoriteWorkspaces: readTestConfig().favoriteWorkspaces ?? { workspaceFiles: [] }
         },
         null,
         2
@@ -99,7 +100,8 @@ suite('CodeOps Panel Extension Integration Tests', () => {
             localPort: 7897,
             remotes
           },
-          keyProjects: readTestConfig().keyProjects ?? getDefaultKeyProjectsConfig()
+          keyProjects: readTestConfig().keyProjects ?? getDefaultKeyProjectsConfig(),
+          favoriteWorkspaces: readTestConfig().favoriteWorkspaces ?? { workspaceFiles: [] }
         },
         null,
         2
@@ -127,6 +129,16 @@ suite('CodeOps Panel Extension Integration Tests', () => {
     fs.writeFileSync(
       testConfigFilePath,
       JSON.stringify({ ...existing, keyProjects: data.keyProjects }, null, 2) + '\n',
+      'utf8'
+    );
+    return testConfigFilePath;
+  };
+
+  const writeFavoriteWorkspacesConfig = (workspaceFiles: string[]): string => {
+    const existing = readTestConfig();
+    fs.writeFileSync(
+      testConfigFilePath,
+      JSON.stringify({ ...existing, favoriteWorkspaces: { workspaceFiles } }, null, 2) + '\n',
       'utf8'
     );
     return testConfigFilePath;
@@ -401,7 +413,7 @@ suite('CodeOps Panel Extension Integration Tests', () => {
     const commands = await vscode.commands.getCommands(true);
     assert.ok(!commands.includes('reverseProxy.start'));
     assert.ok(!commands.includes('reverseProxy.stop'));
-    assert.ok(commands.includes('reverseProxy.showStatus'));
+    assert.ok(!commands.includes('reverseProxy.showStatus'));
     assert.ok(commands.includes('reverseProxy.showLogs'));
     assert.ok(commands.includes('reverseProxy.openSettings'));
     assert.ok(commands.includes('reverseProxy.bootstrapConfig'));
@@ -588,15 +600,25 @@ suite('CodeOps Panel Extension Integration Tests', () => {
       assert.ok(html.includes('Reverse Tunnel Proxies'), 'Reverse tunnel dashboard section should be rendered');
       assert.ok(!html.includes('Manage your tunnel connections'), 'Reverse tunnel helper text should not be rendered');
       assert.ok(html.includes('Pinned Projects'), 'Pinned projects dashboard section should be rendered');
+      assert.ok(html.includes('Favorite Workspaces'), 'Favorite workspaces dashboard section should be rendered');
+      assert.ok(html.includes('id="favorite-add"'), 'Favorite workspaces add button should render');
+      assert.ok(html.includes('grid-template-columns: repeat(auto-fill, minmax(118px, 136px));'), 'Favorite workspaces should use a narrow multi-column card grid');
+      assert.ok(html.includes('justify-content: start;'), 'Favorite workspace cards should keep their narrow width instead of stretching across the row');
+      assert.ok(!html.includes('<div class="card"><div class="workspace-grid">'), 'Favorite workspaces should not render an outer card frame');
       assert.ok(!html.includes('Track your repository status'), 'Pinned projects helper text should not be rendered');
       assert.ok(html.includes('<th>Proxy</th><th class="align-right">Action</th>'), 'Reverse tunnel table header should be rendered');
       assert.ok(html.includes('<th>State</th><th>Repository</th><th>Branch</th><th>Remote</th>'), 'Pinned projects table header should match Figma sample');
       assert.ok(!html.includes('class="brand-icon"'), 'Lucide-style brand icon should not be rendered');
-      assert.ok(html.includes('--bg: #242628;'), 'Webview should use the Soft Graphite background');
-      assert.ok(html.includes('--card: #2c2f33;'), 'Webview should use the Soft Graphite card color');
-      assert.ok(html.includes('--border: #454a51;'), 'Webview should use the Soft Graphite border color');
+      assert.ok(html.includes('class="section-title-mark reverse-title-icon"'), 'Reverse tunnel section should render a title icon');
+      assert.ok(html.includes('class="section-title-mark pinned-title-icon"'), 'Pinned projects section should render a title icon');
+      assert.ok(html.includes('class="section-title-mark favorite-title-icon"'), 'Favorite workspaces section should render a title icon');
+      assert.ok(html.includes('--bg: #11161c;'), 'Webview should use the deep graphite background');
+      assert.ok(html.includes('--card: rgba(29, 35, 44, 0.76);'), 'Webview should use a translucent glass card color');
+      assert.ok(html.includes('--purple-soft: rgba(177, 128, 255, 0.16);'), 'Webview should expose the purple accent wash');
       assert.ok(html.includes('--start-500: #3794ff;'), 'Start button should use the Blue Gray accent');
-      assert.ok(html.includes('background: linear-gradient(90deg, var(--start-500), var(--start-600));'), 'Start button should use the blue gradient');
+      assert.ok(html.includes('background: linear-gradient(135deg, #4a9cff, var(--start-600));'), 'Start button should use the blue gradient');
+      assert.ok(html.includes('backdrop-filter: blur(18px);'), 'Cards and popovers should use a glass blur treatment');
+      assert.ok(html.includes('.workspace-card::before'), 'Favorite workspace cards should include a purple side accent');
       assert.ok(html.includes('<table class="dashboard-table rt-table">'), 'Reverse tunnel should use a table wrapper');
       assert.ok(html.includes('class="rt-proxy-main"'), 'Reverse tunnel should combine state, host, and info in one proxy cell');
       assert.ok(html.includes('class="rt-host-code">10.99.0.1:4001</code>'), 'Host should render with inline-code styling');
@@ -616,6 +638,101 @@ suite('CodeOps Panel Extension Integration Tests', () => {
     } finally {
       await setKeyProjectsWorkspaceOverride();
     }
+  });
+
+  test('favorite workspaces should render cards from workspace files and README summaries', async () => {
+    const workspaceBase = path.join(testDir, 'favorite-workspaces');
+    const frontendDir = path.join(workspaceBase, 'frontend');
+    const apiDir = path.join(workspaceBase, 'api');
+    fs.mkdirSync(frontendDir, { recursive: true });
+    fs.mkdirSync(apiDir, { recursive: true });
+    fs.writeFileSync(path.join(frontendDir, 'README.md'), '# Frontend\n\nReact and TypeScript projects with modern tooling. More details.', 'utf8');
+    const workspaceFile = path.join(workspaceBase, 'Frontend Development.code-workspace');
+    fs.writeFileSync(
+      workspaceFile,
+      JSON.stringify(
+        {
+          folders: [
+            { name: 'Frontend Development', path: 'frontend' },
+            { path: 'api' }
+          ]
+        },
+        null,
+        2
+      ),
+      'utf8'
+    );
+    writeFavoriteWorkspacesConfig([workspaceFile]);
+    await config.update('configFile', testConfigFilePath, vscode.ConfigurationTarget.Global);
+
+    const model = (await vscode.commands.executeCommand('reverseProxy.test.getFavoriteWorkspacesViewState')) as {
+      rows: Array<{ name: string; description: string; available: boolean; workspacePath: string }>;
+    };
+    assert.strictEqual(model.rows.length, 1);
+    assert.strictEqual(model.rows[0]?.name, 'Frontend Development');
+    assert.strictEqual(model.rows[0]?.available, true);
+    assert.strictEqual(model.rows[0]?.workspacePath, workspaceFile);
+    assert.ok(model.rows[0]?.description.includes('2 folders: Frontend Development, api'));
+    assert.ok(model.rows[0]?.description.includes('Frontend React and TypeScript projects with modern tooling.'));
+
+    const html = (await vscode.commands.executeCommand('reverseProxy.test.renderToolBoxHtml')) as string;
+    assert.ok(html.includes('class="workspace-card"'), 'Favorite workspace card should render');
+    assert.ok(html.includes('Frontend Development'), 'Workspace name should render');
+    assert.ok(html.includes('2 folders: Frontend Development, api'), 'Folder summary should render');
+    assert.ok(html.includes('data-workspace-path="'), 'Workspace card should include open path data');
+    assert.ok(html.includes('data-workspace-remove="'), 'Workspace card should include remove path data');
+    assert.ok(!html.includes('workspace-star'), 'Favorite workspace cards should not render star icons');
+    assert.ok(!html.includes('<div class="card"><div class="workspace-grid">'), 'Favorite workspace list should not be wrapped in an outer card frame');
+    assert.ok(html.includes("type: 'favoriteWorkspace', action: 'open'"), 'Webview should post open workspace messages');
+    assert.ok(html.includes("type: 'favoriteWorkspace', action: 'remove'"), 'Webview should post remove workspace messages');
+  });
+
+  test('favorite workspaces add should write config, dedupe, and remove should delete entry', async () => {
+    const workspaceBase = path.join(testDir, 'favorite-add-remove');
+    fs.mkdirSync(workspaceBase, { recursive: true });
+    const workspaceFile = path.join(workspaceBase, 'Backend Services.code-workspace');
+    fs.writeFileSync(workspaceFile, JSON.stringify({ folders: [] }, null, 2), 'utf8');
+    writeFavoriteWorkspacesConfig([]);
+    await config.update('configFile', testConfigFilePath, vscode.ConfigurationTarget.Global);
+
+    await withWindowPrompts(
+      { folders: [workspaceFile] },
+      async () => {
+        await vscode.commands.executeCommand('reverseProxy.test.addFavoriteWorkspace');
+      }
+    );
+    await withWindowPrompts(
+      { folders: [workspaceFile] },
+      async () => {
+        await vscode.commands.executeCommand('reverseProxy.test.addFavoriteWorkspace');
+      }
+    );
+
+    let created = readTestConfig() as { favoriteWorkspaces?: { workspaceFiles?: string[] } };
+    assert.deepStrictEqual(
+      created.favoriteWorkspaces?.workspaceFiles?.map((entry) => entry.toLowerCase()),
+      [workspaceFile.toLowerCase()]
+    );
+
+    await vscode.commands.executeCommand('reverseProxy.test.removeFavoriteWorkspace', workspaceFile);
+    created = readTestConfig() as { favoriteWorkspaces?: { workspaceFiles?: string[] } };
+    assert.deepStrictEqual(created.favoriteWorkspaces?.workspaceFiles, []);
+  });
+
+  test('favorite workspaces should keep missing workspace files as unavailable cards', async () => {
+    const missingWorkspace = path.join(testDir, 'missing-workspace.code-workspace');
+    writeFavoriteWorkspacesConfig([missingWorkspace]);
+    await config.update('configFile', testConfigFilePath, vscode.ConfigurationTarget.Global);
+
+    const model = (await vscode.commands.executeCommand('reverseProxy.test.getFavoriteWorkspacesViewState')) as {
+      rows: Array<{ name: string; available: boolean; error: string | null }>;
+    };
+    assert.strictEqual(model.rows[0]?.name, 'missing-workspace');
+    assert.strictEqual(model.rows[0]?.available, false);
+    assert.ok(model.rows[0]?.error);
+
+    const html = (await vscode.commands.executeCommand('reverseProxy.test.renderToolBoxHtml')) as string;
+    assert.ok(html.includes('class="workspace-card unavailable"'), 'Missing workspace should render as unavailable card');
   });
 
   test('reverse tunnel config should reject legacy single remote shape and duplicate remotes', async () => {
@@ -709,12 +826,6 @@ suite('CodeOps Panel Extension Integration Tests', () => {
       })) as string;
       assert.ok(clicked.includes('repo=dirty-repo.git'));
 
-      const statusBarState = (await vscode.commands.executeCommand('reverseProxy.test.getStatusBarState')) as {
-        proxyText: string;
-        keyText: string;
-        keyTooltip?: string;
-      };
-      assert.strictEqual(statusBarState.keyText, '$(bookmark) dirty-repo.git - feature-dirty');
       assert.ok(clicked.includes('Remote Sync: behind 2'));
       assert.ok(clicked.includes('Fetch: ok'));
       assert.ok(clicked.includes('modified:   src/app.ts'));
@@ -839,10 +950,11 @@ suite('CodeOps Panel Extension Integration Tests', () => {
 
     assert.strictEqual(createdPath.toLowerCase(), path.join(selectedDir, '.vscode', 'mytoolbox.config.json').toLowerCase());
     assert.ok(fs.existsSync(createdPath), 'unified mytoolbox.config.json should be created');
-    const created = JSON.parse(fs.readFileSync(createdPath, 'utf8')) as { ReverseTunnel?: unknown; keyProjects?: { sshPort?: number } };
+    const created = JSON.parse(fs.readFileSync(createdPath, 'utf8')) as { ReverseTunnel?: unknown; keyProjects?: { sshPort?: number }; favoriteWorkspaces?: { workspaceFiles?: string[] } };
     assert.ok(created.ReverseTunnel, 'ReverseTunnel section should exist');
     assert.ok(created.keyProjects, 'keyProjects section should exist');
     assert.strictEqual(created.keyProjects?.sshPort, 22);
+    assert.deepStrictEqual(created.favoriteWorkspaces?.workspaceFiles, []);
   });
 
   test('sidebar remote row should switch Stopped -> Started -> Stopped end-to-end', async () => {
@@ -967,6 +1079,7 @@ suite('CodeOps Panel Extension Integration Tests', () => {
     assert.ok(Array.isArray(remotes), 'ReverseTunnel.remotes should be an array');
     assert.strictEqual(remotes[0]?.remoteHost, 'FOO_ADDRESS');
     assert.strictEqual(remotes[0]?.remoteUser, 'FOO_USER');
+    assert.deepStrictEqual((created.favoriteWorkspaces as { workspaceFiles?: string[] }).workspaceFiles, []);
 
     const updatedConfigFile = vscode.workspace.getConfiguration('myToolbox').get<string>('configFile', '');
     assert.strictEqual(updatedConfigFile, createdPath);
@@ -990,6 +1103,7 @@ suite('CodeOps Panel Extension Integration Tests', () => {
     const created = JSON.parse(fs.readFileSync(bootstrapPath, 'utf8')) as {
       ReverseTunnel: { localHost: string; localPort: number; remotes: Array<{ remoteHost: string; remotePort: number; remoteUser: string }> };
       keyProjects: { mode: string; rootDir: string; repoNames: string[] };
+      favoriteWorkspaces: { workspaceFiles: string[] };
     };
     assert.strictEqual(created.ReverseTunnel.localHost, '127.0.0.1');
     assert.strictEqual(created.ReverseTunnel.localPort, 7897);
@@ -1003,6 +1117,7 @@ suite('CodeOps Panel Extension Integration Tests', () => {
     assert.strictEqual(created.keyProjects.mode, 'local');
     assert.strictEqual(path.normalize(created.keyProjects.rootDir).toLowerCase(), path.normalize('E:/projects').toLowerCase());
     assert.deepStrictEqual(created.keyProjects.repoNames, ['MyToolBox']);
+    assert.deepStrictEqual(created.favoriteWorkspaces.workspaceFiles, []);
   });
 
   test('settings helper should offer bootstrap wizard when config is missing', async () => {

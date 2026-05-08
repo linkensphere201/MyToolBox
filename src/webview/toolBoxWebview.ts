@@ -5,6 +5,7 @@ type ToolBoxWebviewMessage = {
   repoName?: string;
   action?: string;
   remoteKey?: string;
+  workspacePath?: string;
   left?: number;
   top?: number;
 };
@@ -22,6 +23,9 @@ export type ToolBoxWebviewProviderDeps = {
   openProxySettings: () => Promise<void>;
   bootstrapConfig: () => Promise<void>;
   refreshPinnedProjects: () => Promise<void>;
+  addFavoriteWorkspace: () => Promise<void>;
+  removeFavoriteWorkspace: (workspacePath: string) => Promise<void>;
+  openFavoriteWorkspace: (workspacePath: string) => Promise<void>;
   startReverseTunnel: (remoteKey: string) => Promise<void>;
   stopReverseTunnel: (remoteKey: string) => void;
 };
@@ -79,6 +83,15 @@ export class ToolBoxWebviewProvider implements vscode.WebviewViewProvider {
       return;
     }
 
+    if (message.type === 'favoriteWorkspace' && message.action && message.workspacePath) {
+      if (message.action === 'open') {
+        await this.deps.openFavoriteWorkspace(message.workspacePath);
+      } else if (message.action === 'remove') {
+        await this.deps.removeFavoriteWorkspace(message.workspacePath);
+      }
+      return;
+    }
+
     if (message.type !== 'action' || !message.action) {
       return;
     }
@@ -95,6 +108,9 @@ export class ToolBoxWebviewProvider implements vscode.WebviewViewProvider {
         return;
       case 'keyRefresh':
         await this.deps.refreshPinnedProjects();
+        return;
+      case 'favoriteAdd':
+        await this.deps.addFavoriteWorkspace();
         return;
       default:
         return;

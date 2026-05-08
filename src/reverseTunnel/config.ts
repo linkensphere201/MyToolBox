@@ -197,6 +197,9 @@ export function getDefaultConfigJsonContent(): string {
         sshPort: 22,
         gitPath: 'git',
         sshPath: 'ssh'
+      },
+      favoriteWorkspaces: {
+        workspaceFiles: []
       }
     },
     null,

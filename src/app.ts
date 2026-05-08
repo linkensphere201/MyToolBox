@@ -28,8 +28,6 @@ import { ReverseTunnelService } from './reverseTunnel/service';
 import { PinnedProjectsService } from './pinnedProjects/service';
 
 let outputChannel: vscode.OutputChannel;
-let statusBarItem: vscode.StatusBarItem;
-let keyStatusBarItem: vscode.StatusBarItem;
 let extensionContextRef: vscode.ExtensionContext | null = null;
 let toolBoxWebviewProvider: ToolBoxWebviewProvider | null = null;
 let reverseTunnelService: ReverseTunnelService | null = null;
@@ -164,6 +162,27 @@ type KeyProjectsViewModel = {
   rows: KeyProjectsViewRow[];
 };
 
+type FavoriteWorkspacesConfig = {
+  workspaceFiles: string[];
+  loadedConfigPath: string;
+  configExists: boolean;
+};
+
+type FavoriteWorkspaceViewRow = {
+  workspacePath: string;
+  name: string;
+  description: string;
+  folderSummary: string;
+  readmeSummary: string;
+  available: boolean;
+  error: string | null;
+};
+
+type FavoriteWorkspacesViewModel = {
+  issue: string | null;
+  rows: FavoriteWorkspaceViewRow[];
+};
+
 type ToolBoxAction = {
   id: 'bootstrap' | 'logs' | 'proxySettings' | 'keyRefresh';
   label: string;
@@ -183,6 +202,9 @@ type BootstrapKeyProjectsConfig = {
 type BootstrapToolBoxConfig = {
   ReverseTunnel: FileProxyConfig;
   keyProjects: BootstrapKeyProjectsConfig;
+  favoriteWorkspaces: {
+    workspaceFiles: string[];
+  };
 };
 
 type ToolBoxConfigPathInfo = {
@@ -215,6 +237,7 @@ type ReverseTunnelViewModel = {
 type ToolBoxViewModel = {
   reverseTunnel: ReverseTunnelViewModel;
   keyProjects: KeyProjectsViewModel;
+  favoriteWorkspaces: FavoriteWorkspacesViewModel;
 };
 
 type SidebarTestItem = {
@@ -515,7 +538,8 @@ async function getKeyProjectsViewModel(): Promise<KeyProjectsViewModel> {
 async function getToolBoxViewModel(): Promise<ToolBoxViewModel> {
   return {
     reverseTunnel: await getReverseTunnelViewModel(),
-    keyProjects: await getKeyProjectsViewModel()
+    keyProjects: await getKeyProjectsViewModel(),
+    favoriteWorkspaces: await getFavoriteWorkspacesViewModel()
   };
 }
 
@@ -548,39 +572,7 @@ async function getPinnedProjectDetailForWebview(repoName: string): Promise<{ tit
 function setRemoteTunnelState(remoteKey: string, state: ProxyState): void {
   const remoteState = getOrCreateRemoteTunnelState(remoteKey);
   remoteState.state = state;
-  updateReverseTunnelStatusBar();
   void toolBoxWebviewProvider?.refresh();
-}
-
-function updateReverseTunnelStatusBar(): void {
-  if (!statusBarItem) {
-    return;
-  }
-
-  let config: RuntimeProxyConfig | null = null;
-  try {
-    config = getConfig();
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    statusBarItem.text = '$(error) ReverseTun setup';
-    statusBarItem.tooltip = message;
-    statusBarItem.show();
-    return;
-  }
-
-  const states = config.remotes.map((remote) => getOrCreateRemoteTunnelState(remote.key));
-  const startedCount = states.filter((state) => state.state === 'connected' || state.state === 'external').length;
-  const hasFailed = states.some((state) => state.state === 'failed');
-  const hasStarting = states.some((state) => state.state === 'starting');
-  const icon = hasFailed ? '$(error)' : hasStarting ? '$(sync~spin)' : startedCount > 0 ? '$(check)' : '$(circle-slash)';
-  statusBarItem.text = `${icon} ReverseTun ${startedCount}/${config.remotes.length}`;
-  statusBarItem.tooltip = config.remotes
-    .map((remote) => {
-      const state = getOrCreateRemoteTunnelState(remote.key);
-      return `${remote.hostLabel}: ${getStateLabel(state.state)}`;
-    })
-    .join('\n');
-  statusBarItem.show();
 }
 
 function getReverseTunnelSidebarItemsForTest(): SidebarTestItem[] {
@@ -738,54 +730,6 @@ async function getSidebarItemsForTest(): Promise<{ root: SidebarTestItem[]; chil
   };
 }
 
-async function updateKeyStatusBar(): Promise<void> {
-  if (!keyStatusBarItem) {
-    return;
-  }
-
-  keyStatusBarItem.command = 'reverseProxy.refreshKeyProjects';
-
-  if (keyProjectsRefreshPromise) {
-    keyStatusBarItem.text = '$(sync~spin) $(bookmark) Refreshing...';
-    keyStatusBarItem.tooltip = 'Refreshing key project status.';
-    keyStatusBarItem.show();
-    return;
-  }
-
-  let config: KeyProjectsConfig;
-  try {
-    config = await getKeyProjectsConfig();
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    keyStatusBarItem.text = '$(bookmark) setup';
-    keyStatusBarItem.tooltip = message;
-    keyStatusBarItem.command = 'reverseProxy.openKeyProjectSettings';
-    keyStatusBarItem.show();
-    return;
-  }
-  const issue = getKeyProjectsConfigurationIssue(config);
-  if (issue) {
-    keyStatusBarItem.text = '$(bookmark) setup';
-    keyStatusBarItem.tooltip = issue;
-    keyStatusBarItem.command = 'reverseProxy.openKeyProjectSettings';
-    keyStatusBarItem.show();
-    return;
-  }
-
-  const cached = getCachedKeyProjectStatuses(config);
-  const first = cached?.[0];
-  if (!first) {
-    keyStatusBarItem.text = '$(bookmark) not loaded';
-    keyStatusBarItem.tooltip = 'Click to refresh key project status.';
-    keyStatusBarItem.show();
-    return;
-  }
-
-  keyStatusBarItem.text = `$(bookmark) ${first.repoName} - ${first.branch}`;
-  keyStatusBarItem.tooltip = formatKeyProjectTooltip(first);
-  keyStatusBarItem.show();
-}
-
 async function setKeyProjectsWorkspaceOverrideForTest(workspacePath?: string | null): Promise<string | null> {
   keyProjectsWorkspaceOverride = workspacePath ?? null;
   void toolBoxWebviewProvider?.refresh();
@@ -850,6 +794,211 @@ async function getKeyProjectsConfig(workspacePath?: string): Promise<KeyProjects
   );
 
   return result;
+}
+
+async function readToolBoxConfigRoot(configPath: string, allowMissing: boolean): Promise<Record<string, unknown> | null> {
+  const configUri = vscode.Uri.file(configPath);
+
+  try {
+    const bytes = await vscode.workspace.fs.readFile(configUri);
+    const rawText = Buffer.from(bytes).toString('utf8');
+    const raw = JSON.parse(rawText) as unknown;
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+      throw new Error(`Invalid config file '${configUri.toString()}': root must be a JSON object.`);
+    }
+    return raw as Record<string, unknown>;
+  } catch (error) {
+    if (allowMissing && isFileNotFoundError(error)) {
+      return null;
+    }
+    throw error;
+  }
+}
+
+function resolvePathFromConfigDir(configPath: string, value: string): string {
+  const trimmed = value.trim();
+  if (path.isAbsolute(trimmed)) {
+    return path.normalize(trimmed);
+  }
+  return path.normalize(path.resolve(path.dirname(configPath), trimmed));
+}
+
+async function getFavoriteWorkspacesConfig(): Promise<FavoriteWorkspacesConfig> {
+  const toolBoxConfig = vscode.workspace.getConfiguration(TOOLBOX_CONFIGURATION_SECTION);
+  const configuredPath = toolBoxConfig.get<string>(TOOLBOX_CONFIG_FILE_SETTING, DEFAULT_TOOLBOX_CONFIG_FILE);
+  const configPath = resolveConfiguredConfigPath(configuredPath);
+  const parsed = await readToolBoxConfigRoot(configPath, true);
+  const section =
+    parsed && parsed.favoriteWorkspaces && typeof parsed.favoriteWorkspaces === 'object' && !Array.isArray(parsed.favoriteWorkspaces)
+      ? (parsed.favoriteWorkspaces as Record<string, unknown>)
+      : {};
+
+  return {
+    workspaceFiles: assertStringArray(section.workspaceFiles ?? [], 'favoriteWorkspaces.workspaceFiles')
+      .map((entry) => resolvePathFromConfigDir(configPath, entry)),
+    loadedConfigPath: configPath,
+    configExists: Boolean(parsed)
+  };
+}
+
+function getWorkspaceFolderDisplayName(folder: unknown, workspaceFilePath: string): string | null {
+  if (!folder || typeof folder !== 'object' || Array.isArray(folder)) {
+    return null;
+  }
+  const data = folder as Record<string, unknown>;
+  if (typeof data.name === 'string' && data.name.trim()) {
+    return data.name.trim();
+  }
+  if (typeof data.path === 'string' && data.path.trim()) {
+    return path.basename(resolveWorkspaceFolderPath(workspaceFilePath, data.path.trim()));
+  }
+  if (typeof data.uri === 'string' && data.uri.trim()) {
+    try {
+      const uri = vscode.Uri.parse(data.uri.trim());
+      return path.basename(uri.fsPath || uri.path);
+    } catch {
+      return path.basename(data.uri.trim());
+    }
+  }
+  return null;
+}
+
+function resolveWorkspaceFolderPath(workspaceFilePath: string, folderPath: string): string {
+  if (path.isAbsolute(folderPath)) {
+    return folderPath;
+  }
+  return path.resolve(path.dirname(workspaceFilePath), folderPath);
+}
+
+function getWorkspaceFolderPaths(folders: unknown, workspaceFilePath: string): string[] {
+  if (!Array.isArray(folders)) {
+    return [];
+  }
+  return folders
+    .map((folder) => {
+      if (!folder || typeof folder !== 'object' || Array.isArray(folder)) {
+        return null;
+      }
+      const data = folder as Record<string, unknown>;
+      if (typeof data.path === 'string' && data.path.trim()) {
+        return resolveWorkspaceFolderPath(workspaceFilePath, data.path.trim());
+      }
+      if (typeof data.uri === 'string' && data.uri.trim()) {
+        try {
+          const uri = vscode.Uri.parse(data.uri.trim());
+          return uri.scheme === 'file' ? uri.fsPath : null;
+        } catch {
+          return null;
+        }
+      }
+      return null;
+    })
+    .filter((entry): entry is string => Boolean(entry));
+}
+
+function createFolderSummary(folders: unknown, workspaceFilePath: string): string {
+  if (!Array.isArray(folders) || folders.length === 0) {
+    return '';
+  }
+  const names = folders
+    .map((folder) => getWorkspaceFolderDisplayName(folder, workspaceFilePath))
+    .filter((entry): entry is string => Boolean(entry));
+  if (names.length === 0) {
+    return '';
+  }
+  const visible = names.slice(0, 3).join(', ');
+  const suffix = names.length > 3 ? `, +${names.length - 3} more` : '';
+  return `${names.length} folder${names.length === 1 ? '' : 's'}: ${visible}${suffix}`;
+}
+
+function extractReadmeSummary(text: string): string {
+  const normalized = text
+    .replace(/\r\n/g, '\n')
+    .split('\n')
+    .map((line) => line.replace(/^#+\s*/, '').trim())
+    .filter((line) => line && !/^```/.test(line));
+  const paragraph = normalized.join(' ').replace(/\s+/g, ' ').trim();
+  if (!paragraph) {
+    return '';
+  }
+  const sentenceMatch = paragraph.match(/^.{1,220}?(?:[.!?。！？](?:\s|$)|$)/);
+  return (sentenceMatch?.[0] ?? paragraph).slice(0, 220).trim();
+}
+
+async function readFirstReadmeSummary(folderPaths: string[]): Promise<string> {
+  const candidates = ['README.md', 'README.MD', 'readme.md', 'Readme.md'];
+  for (const folderPath of folderPaths) {
+    for (const candidate of candidates) {
+      const readmePath = path.join(folderPath, candidate);
+      try {
+        const bytes = await vscode.workspace.fs.readFile(vscode.Uri.file(readmePath));
+        const summary = extractReadmeSummary(Buffer.from(bytes).toString('utf8'));
+        if (summary) {
+          return summary;
+        }
+      } catch (error) {
+        if (!isFileNotFoundError(error)) {
+          outputChannel?.appendLine(`[favorite-workspaces] failed to read README '${readmePath}': ${error instanceof Error ? error.message : String(error)}`);
+        }
+      }
+    }
+  }
+  return '';
+}
+
+async function getFavoriteWorkspaceRow(workspacePath: string): Promise<FavoriteWorkspaceViewRow> {
+  const name = path.basename(workspacePath, '.code-workspace');
+  try {
+    const bytes = await vscode.workspace.fs.readFile(vscode.Uri.file(workspacePath));
+    const raw = JSON.parse(Buffer.from(bytes).toString('utf8')) as unknown;
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+      throw new Error('workspace file root must be a JSON object');
+    }
+    const data = raw as Record<string, unknown>;
+    const folderSummary = createFolderSummary(data.folders, workspacePath);
+    const readmeSummary = await readFirstReadmeSummary(getWorkspaceFolderPaths(data.folders, workspacePath));
+    const description = [folderSummary, readmeSummary].filter(Boolean).join(' | ');
+    return {
+      workspacePath,
+      name,
+      description,
+      folderSummary,
+      readmeSummary,
+      available: true,
+      error: null
+    };
+  } catch (error) {
+    return {
+      workspacePath,
+      name,
+      description: '',
+      folderSummary: '',
+      readmeSummary: '',
+      available: false,
+      error: error instanceof Error ? error.message : String(error)
+    };
+  }
+}
+
+async function getFavoriteWorkspacesViewModel(): Promise<FavoriteWorkspacesViewModel> {
+  try {
+    const config = await getFavoriteWorkspacesConfig();
+    if (!config.configExists) {
+      return {
+        issue: null,
+        rows: []
+      };
+    }
+    return {
+      issue: null,
+      rows: await Promise.all(config.workspaceFiles.map((workspacePath) => getFavoriteWorkspaceRow(workspacePath)))
+    };
+  } catch (error) {
+    return {
+      issue: error instanceof Error ? error.message : String(error),
+      rows: []
+    };
+  }
 }
 
 function getKeyProjectsConfigurationIssue(config: KeyProjectsConfig): string | null {
@@ -1181,8 +1330,6 @@ async function refreshKeyProjects(): Promise<void> {
       outputChannel?.appendLine(`[key-projects] refresh skipped: ${issue}`);
       invalidateKeyProjectsCache('configuration issue');
       void toolBoxWebviewProvider?.refresh();
-    
-      await updateKeyStatusBar();
       return;
     }
 
@@ -1190,21 +1337,15 @@ async function refreshKeyProjects(): Promise<void> {
     setCachedKeyProjectStatuses(config, statuses);
     outputChannel?.appendLine(`[key-projects] refresh complete count=${statuses.length}`);
     void toolBoxWebviewProvider?.refresh();
-  
-    await updateKeyStatusBar();
   })();
 
   void toolBoxWebviewProvider?.refresh();
-
-  void updateKeyStatusBar();
 
   try {
     await keyProjectsRefreshPromise;
   } finally {
     keyProjectsRefreshPromise = null;
     void toolBoxWebviewProvider?.refresh();
-  
-    await updateKeyStatusBar();
   }
 }
 
@@ -1780,11 +1921,6 @@ function stopRemoteTunnel(remoteKey: string): void {
   vscode.window.showInformationMessage(`Reverse tunnel stopping: ${remoteKey}`);
 }
 
-function showStatus(): void {
-  const started = Array.from(remoteTunnelStates.values()).filter((state) => state.state === 'connected' || state.state === 'external').length;
-  vscode.window.showInformationMessage(`Reverse tunnel status: ${started} started remote(s).`);
-}
-
 function showLogs(): void {
   outputChannel.show(true);
 }
@@ -1809,7 +1945,6 @@ function resetReverseTunnelStatesForTest(): void {
     }
   }
   remoteTunnelStates.clear();
-  updateReverseTunnelStatusBar();
   void toolBoxWebviewProvider?.refresh();
 }
 
@@ -1852,6 +1987,27 @@ async function writeToolBoxConfigFile(configPath: string, config: BootstrapToolB
     vscode.Uri.file(configPath),
     Buffer.from(JSON.stringify(config, null, 2) + '\n', 'utf8')
   );
+}
+
+async function readToolBoxConfigRootForUpdate(configPath: string): Promise<Record<string, unknown>> {
+  const existing = await readToolBoxConfigRoot(configPath, true);
+  return existing ?? (JSON.parse(getDefaultConfigJsonContent()) as Record<string, unknown>);
+}
+
+function getFavoriteWorkspaceFilesForUpdate(root: Record<string, unknown>): string[] {
+  const section =
+    root.favoriteWorkspaces && typeof root.favoriteWorkspaces === 'object' && !Array.isArray(root.favoriteWorkspaces)
+      ? (root.favoriteWorkspaces as Record<string, unknown>)
+      : {};
+  return assertStringArray(section.workspaceFiles ?? [], 'favoriteWorkspaces.workspaceFiles');
+}
+
+async function writeFavoriteWorkspaceFiles(configPath: string, workspaceFiles: string[]): Promise<void> {
+  const root = await readToolBoxConfigRootForUpdate(configPath);
+  root.favoriteWorkspaces = { workspaceFiles };
+  await writeToolBoxConfigFile(configPath, root);
+  await updateToolBoxConfigFileSetting(configPath);
+  await refreshToolBoxAfterConfigChange();
 }
 
 async function updateToolBoxConfigFileSetting(configPath: string): Promise<void> {
@@ -2081,6 +2237,9 @@ async function runBootstrapWizard(): Promise<BootstrapToolBoxConfig | undefined>
       sshPort,
       gitPath: 'git',
       sshPath: 'ssh'
+    },
+    favoriteWorkspaces: {
+      workspaceFiles: []
     }
   };
 }
@@ -2088,9 +2247,7 @@ async function runBootstrapWizard(): Promise<BootstrapToolBoxConfig | undefined>
 async function refreshToolBoxAfterConfigChange(): Promise<void> {
   invalidateKeyProjectsCache('config file changed');
   void reverseTunnelService?.syncStateFromSystem();
-  reverseTunnelService?.updateStatusBar();
   void toolBoxWebviewProvider?.refresh();
-  await pinnedProjectsService?.updateStatusBar();
 }
 
 async function bootstrapConfig(): Promise<string | undefined> {
@@ -2144,34 +2301,77 @@ async function openSettingsConfig(): Promise<string | undefined> {
   return openToolBoxConfigFile(configPath);
 }
 
+async function addFavoriteWorkspace(): Promise<string | undefined> {
+  const selection = await vscode.window.showOpenDialog({
+    canSelectFiles: true,
+    canSelectFolders: false,
+    canSelectMany: false,
+    filters: {
+      'VS Code Workspaces': ['code-workspace']
+    },
+    title: 'Select a VS Code workspace file'
+  });
+  const selected = selection?.[0]?.fsPath;
+  if (!selected) {
+    return undefined;
+  }
+  if (path.extname(selected).toLowerCase() !== '.code-workspace') {
+    void vscode.window.showErrorMessage('Select a .code-workspace file.');
+    return undefined;
+  }
+
+  const { configPath } = getToolBoxConfigPathInfo();
+  const root = await readToolBoxConfigRootForUpdate(configPath);
+  const existing = getFavoriteWorkspaceFilesForUpdate(root);
+  const normalizedSelected = path.normalize(selected);
+  const exists = existing.some((entry) => path.normalize(resolvePathFromConfigDir(configPath, entry)).toLowerCase() === normalizedSelected.toLowerCase());
+  if (!exists) {
+    await writeFavoriteWorkspaceFiles(configPath, [...existing, normalizedSelected]);
+  } else {
+    await updateToolBoxConfigFileSetting(configPath);
+    void toolBoxWebviewProvider?.refresh();
+  }
+  return normalizedSelected;
+}
+
+async function removeFavoriteWorkspace(workspacePath: string): Promise<void> {
+  const { configPath } = getToolBoxConfigPathInfo();
+  const root = await readToolBoxConfigRootForUpdate(configPath);
+  const normalizedTarget = path.normalize(workspacePath).toLowerCase();
+  const next = getFavoriteWorkspaceFilesForUpdate(root)
+    .filter((entry) => path.normalize(resolvePathFromConfigDir(configPath, entry)).toLowerCase() !== normalizedTarget);
+  await writeFavoriteWorkspaceFiles(configPath, next);
+}
+
+async function openFavoriteWorkspace(workspacePath: string): Promise<void> {
+  if (!fs.existsSync(workspacePath)) {
+    void vscode.window.showErrorMessage(`Favorite workspace does not exist: ${workspacePath}`);
+    return;
+  }
+  try {
+    JSON.parse(await fs.promises.readFile(workspacePath, 'utf8'));
+  } catch (error) {
+    void vscode.window.showErrorMessage(`Favorite workspace is not a valid JSON file: ${error instanceof Error ? error.message : String(error)}`);
+    return;
+  }
+  await vscode.commands.executeCommand('vscode.openFolder', vscode.Uri.file(workspacePath), { forceNewWindow: true });
+}
+
 export function activate(context: vscode.ExtensionContext): void {
   extensionContextRef = context;
   outputChannel = createTimestampedOutputChannel(vscode.window.createOutputChannel('CodeOps Panel'));
-  keyStatusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 150);
-  keyStatusBarItem.command = 'reverseProxy.refreshKeyProjects';
-  keyStatusBarItem.text = '$(bookmark) not loaded';
-  keyStatusBarItem.tooltip = 'Click to refresh key project status.';
-  keyStatusBarItem.show();
-
-  statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
-  statusBarItem.command = 'reverseProxy.showStatus';
-  updateReverseTunnelStatusBar();
-  statusBarItem.show();
   reverseTunnelService = new ReverseTunnelService({
     getViewModel: getReverseTunnelViewModel,
-    updateStatusBar: updateReverseTunnelStatusBar,
     getSidebarItemsForTest: getReverseTunnelSidebarItemsForTest,
     syncStateFromSystem: () => syncProxyStateFromSystem(),
     start: startRemoteTunnel,
     stop: stopRemoteTunnel,
-    showStatus,
     resetStatesForTest: resetReverseTunnelStatesForTest,
     getStatesForTest: getReverseTunnelStatesForTest,
     dispose: disposeReverseTunnelState
   });
   pinnedProjectsService = new PinnedProjectsService({
     getViewModel: getKeyProjectsViewModel,
-    updateStatusBar: updateKeyStatusBar,
     refresh: refreshKeyProjects,
     invalidateCache: invalidateKeyProjectsCache,
     openSettings: openKeyProjectsSettings,
@@ -2191,6 +2391,11 @@ export function activate(context: vscode.ExtensionContext): void {
       await bootstrapConfig();
     },
     refreshPinnedProjects: () => pinnedProjectsService?.refresh() ?? refreshKeyProjects(),
+    addFavoriteWorkspace: async () => {
+      await addFavoriteWorkspace();
+    },
+    removeFavoriteWorkspace,
+    openFavoriteWorkspace,
     startReverseTunnel: (remoteKey) => reverseTunnelService?.start(remoteKey) ?? startRemoteTunnel(remoteKey),
     stopReverseTunnel: (remoteKey) => (reverseTunnelService ?? { stop: stopRemoteTunnel }).stop(remoteKey)
   });
@@ -2200,32 +2405,20 @@ export function activate(context: vscode.ExtensionContext): void {
   }
 
   void reverseTunnelService.syncStateFromSystem();
-  void pinnedProjectsService.updateStatusBar();
 
   const toolBoxWebviewRegistration = vscode.window.registerWebviewViewProvider(ToolBoxWebviewProvider.viewType, toolBoxWebviewProvider);
 
   context.subscriptions.push(
     outputChannel,
-    keyStatusBarItem,
-    statusBarItem,
     toolBoxWebviewRegistration,
     vscode.workspace.onDidChangeConfiguration((event) => {
       if (event.affectsConfiguration(`${TOOLBOX_CONFIGURATION_SECTION}.${TOOLBOX_CONFIG_FILE_SETTING}`)) {
         invalidateKeyProjectsCache('config file setting changed');
         void reverseTunnelService?.syncStateFromSystem();
-        reverseTunnelService?.updateStatusBar();
       }
       if (event.affectsConfiguration(TOOLBOX_CONFIGURATION_SECTION)) {
         void toolBoxWebviewProvider?.refresh();
-        reverseTunnelService?.updateStatusBar();
       }
-      void pinnedProjectsService?.updateStatusBar();
-    })
-  );
-
-  context.subscriptions.push(
-    vscode.commands.registerCommand('reverseProxy.showStatus', () => {
-      reverseTunnelService?.showStatus();
     })
   );
 
@@ -2274,6 +2467,24 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     vscode.commands.registerCommand('reverseProxy.test.renderToolBoxHtml', async () => {
       return renderToolBoxWebview({ cspSource: 'vscode-test-resource' } as vscode.Webview, await getToolBoxViewModel());
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('reverseProxy.test.getFavoriteWorkspacesViewState', async () => {
+      return getFavoriteWorkspacesViewModel();
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('reverseProxy.test.addFavoriteWorkspace', async () => {
+      return addFavoriteWorkspace();
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('reverseProxy.test.removeFavoriteWorkspace', async (workspacePath: string) => {
+      return removeFavoriteWorkspace(workspacePath);
     })
   );
 
@@ -2373,15 +2584,6 @@ export function activate(context: vscode.ExtensionContext): void {
 
 
   context.subscriptions.push(
-    vscode.commands.registerCommand('reverseProxy.test.getStatusBarState', () => {
-      return {
-        proxyText: statusBarItem.text,
-        keyText: keyStatusBarItem.text,
-        keyTooltip: typeof keyStatusBarItem.tooltip === 'string' ? keyStatusBarItem.tooltip : keyStatusBarItem.tooltip?.value
-      };
-    })
-  );
-  context.subscriptions.push(
     vscode.commands.registerCommand('reverseProxy.test.openSettingsWithDirectory', async (dir: string) => {
       const toolBoxConfig = vscode.workspace.getConfiguration(TOOLBOX_CONFIGURATION_SECTION);
       const finalConfigPath = path.join(dir, DEFAULT_CREATED_TOOLBOX_CONFIG_FILE);
@@ -2410,9 +2612,6 @@ export function deactivate(): void {
   reverseTunnelService?.dispose();
   reverseTunnelService = null;
   pinnedProjectsService = null;
-  if (keyStatusBarItem) {
-    keyStatusBarItem.dispose();
-  }
 }
 
 
