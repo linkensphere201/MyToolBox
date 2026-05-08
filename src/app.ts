@@ -784,6 +784,11 @@ function isFileNotFoundError(error: unknown): boolean {
   return /FileNotFound|EntryNotFound|ENOENT/i.test(details);
 }
 
+function isFileSystemProviderUnavailableError(error: unknown): boolean {
+  const details = error instanceof Error ? `${error.name} ${error.message}` : String(error);
+  return /ENOPRO|No file system provider|file system provider|文件系统提供程序/i.test(details);
+}
+
 async function getKeyProjectsConfig(workspacePath?: string): Promise<KeyProjectsConfig> {
   void workspacePath;
   const { configPath, configUri } = getConfiguredConfigFileRef();
@@ -1111,7 +1116,9 @@ async function scanFavoriteWorkspaceFolder(folderUri: vscode.Uri, languageBytes:
   try {
     entries = await vscode.workspace.fs.readDirectory(folderUri);
   } catch (error) {
-    if (!isFileNotFoundError(error)) {
+    if (isFileSystemProviderUnavailableError(error)) {
+      appendDebugLine(`[favorite-workspaces] skipped scan for unavailable filesystem provider '${folderUri.toString()}': ${error instanceof Error ? error.message : String(error)}`);
+    } else if (!isFileNotFoundError(error)) {
       outputChannel?.appendLine(`[favorite-workspaces] failed to scan '${folderUri.toString()}': ${error instanceof Error ? error.message : String(error)}`);
     }
     return;
@@ -1146,7 +1153,9 @@ async function scanFavoriteWorkspaceFolder(folderUri: vscode.Uri, languageBytes:
       }
       languageBytes.set(language, (languageBytes.get(language) ?? 0) + stat.size);
     } catch (error) {
-      if (!isFileNotFoundError(error)) {
+      if (isFileSystemProviderUnavailableError(error)) {
+        appendDebugLine(`[favorite-workspaces] skipped stat for unavailable filesystem provider '${entryUri.toString()}': ${error instanceof Error ? error.message : String(error)}`);
+      } else if (!isFileNotFoundError(error)) {
         outputChannel?.appendLine(`[favorite-workspaces] failed to stat '${entryUri.toString()}': ${error instanceof Error ? error.message : String(error)}`);
       }
     }

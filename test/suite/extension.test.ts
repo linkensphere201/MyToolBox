@@ -637,6 +637,8 @@ suite('CodeOps Panel Extension Integration Tests', () => {
       assert.ok(html.includes('class="rt-proxy-main"'), 'Reverse tunnel should combine state, host, and info in one proxy cell');
       assert.ok(html.includes('class="rt-host-code">10.99.0.1:4001</code>'), 'Host should render with inline-code styling');
       assert.ok(html.includes('class="rt-state-icon stopped"'), 'Stopped state should render as icon class');
+      assert.ok(html.includes('class="rt-server-state"'), 'Reverse tunnel state should render as a compact server icon');
+      assert.ok(html.includes('class="rt-server-state-dot stopped"'), 'Reverse tunnel server icon should include a status dot');
       assert.ok(html.includes('class="rt-info-icon"'), 'Info icon should be rendered next to state icon');
       assert.ok(html.includes('class="rt-action-button start"'), 'Start action button should be rendered');
       assert.ok(html.includes('data-tooltip="remote: 10.99.0.1:4001'), 'Info icon should use immediate custom tooltip data');
@@ -698,7 +700,7 @@ suite('CodeOps Panel Extension Integration Tests', () => {
     assert.ok(html.includes('Frontend Development, api, +1 more'), 'Folder summary should render');
     assert.ok(html.includes('class="workspace-folder-icon"'), 'Folder summary should render with a folder icon');
     assert.ok(!html.includes('3 folders:'), 'Folder summary should not include folder count prefix');
-    assert.ok(!html.includes('class="workspace-language-divider"'), 'Language divider should not render without languages');
+    assert.ok(!html.includes('workspace-language-divider'), 'Language divider should not render');
     assert.ok(!html.includes('class="workspace-language-bar"'), 'Language distribution should not render without languages');
     assert.ok(html.includes('data-workspace-path="'), 'Workspace card should include open path data');
     assert.ok(html.includes('data-workspace-remove="'), 'Workspace card should include remove path data');
@@ -781,7 +783,7 @@ suite('CodeOps Panel Extension Integration Tests', () => {
     assert.ok(!model.rows[0]?.languageSummary.includes('Python'), 'Ignored directories should not contribute languages');
     assert.strictEqual(model.rows[0]?.languages.length, 2);
     const html = (await vscode.commands.executeCommand('reverseProxy.test.renderToolBoxHtml')) as string;
-    assert.ok(html.includes('class="workspace-language-divider"'), 'Language divider should render when languages exist');
+    assert.ok(!html.includes('workspace-language-divider'), 'Language divider should not render');
     assert.ok(html.includes('class="workspace-language-bar"'), 'Language distribution bar should render when languages exist');
     assert.ok(html.includes('workspace-language-segment typescript'), 'TypeScript distribution segment should render');
     assert.ok(html.includes('workspace-language-dot typescript'), 'TypeScript language dot should render');

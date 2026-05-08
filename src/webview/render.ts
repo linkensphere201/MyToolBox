@@ -34,6 +34,7 @@ function iconSvg(name: string, className = ''): string {
     plus: '<path d="M5 12h14"/><path d="M12 5v14"/>',
     rocket: '<path d="M4.5 16.5c-1.5 1.26-2 3.75-2 3.75s2.49-.5 3.75-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09z"/><path d="m12 15-3-3a22 22 0 0 1 2-4.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-5.05 11a22 22 0 0 1-4.95 2z"/><path d="M9 12H4s.55-3.03 2-4c1.62-1.08 5 0 5 0"/><path d="M12 15v5s3.03-.55 4-2c1.08-1.62 0-5 0-5"/>',
     refresh: '<path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/>',
+    server: '<rect width="20" height="8" x="2" y="2" rx="2"/><rect width="20" height="8" x="2" y="14" rx="2"/><path d="M6 6h.01"/><path d="M6 18h.01"/>',
     settings: '<path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/>',
     shield: '<path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.5 3.8 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/>',
     square: '<rect width="18" height="18" x="3" y="3" rx="2"/>',
@@ -51,19 +52,8 @@ function getReverseTunnelActionIconSvg(actionId: string): string {
 }
 
 function getReverseTunnelStateIconSvg(tone: 'connected' | 'external' | 'starting' | 'failed' | 'stopped'): string {
-  if (tone === 'connected') {
-    return '<span class="state-pulse-wrap">' + iconSvg('activity') + '<span class="state-pulse-dot"></span></span>';
-  }
-  if (tone === 'external') {
-    return '<span class="state-pulse-wrap">' + iconSvg('activity') + '<span class="state-pulse-dot"></span></span>';
-  }
-  if (tone === 'starting') {
-    return iconSvg('loader');
-  }
-  if (tone === 'failed') {
-    return iconSvg('x');
-  }
-  return iconSvg('linkOff');
+  const pulse = tone === 'connected' || tone === 'external' || tone === 'starting' ? ' pulse' : '';
+  return '<span class="rt-server-state">' + iconSvg('server') + '<span class="rt-server-state-dot ' + escapeHtml(tone) + pulse + '"></span></span>';
 }
 
 function getKeyProjectsToolbarIconSvg(actionId: string): string {
@@ -289,7 +279,6 @@ export function renderToolBoxWebview(webview: vscode.Webview, model: any): strin
         '    </span>',
         '  </span>',
         folderSummary ? '  <span class="workspace-folders"><span class="workspace-folder-icon" aria-hidden="true">' + iconSvg('folder') + '</span><span class="workspace-folder-text">' + escapeHtml(folderSummary) + '</span></span>' : '  <span class="workspace-folders empty-description"></span>',
-        languageRows ? '  <span class="workspace-language-divider" aria-hidden="true"></span>' : '',
         languageDistributionBar,
         languageRows ? '  <span class="workspace-languages">' + languageRows + '</span>' : '',
         '</button>'
@@ -556,35 +545,65 @@ export function renderToolBoxWebview(webview: vscode.Webview, model: any): strin
       height: 16px;
     }
     .rt-state-icon.connected {
-      color: var(--success);
+      color: color-mix(in srgb, var(--success) 72%, var(--muted));
     }
     .rt-state-icon.external {
-      color: var(--blue-400);
+      color: color-mix(in srgb, var(--blue-400) 72%, var(--muted));
     }
     .rt-state-icon.starting {
-      color: var(--amber-400);
-      animation: spin 1s linear infinite;
+      color: color-mix(in srgb, var(--amber-400) 72%, var(--muted));
     }
     .rt-state-icon.failed {
-      color: var(--danger-500);
+      color: color-mix(in srgb, var(--danger-500) 76%, var(--muted));
     }
     .rt-state-icon.stopped {
       color: var(--muted);
     }
-    .state-pulse-wrap {
+    .rt-server-state {
       position: relative;
       display: inline-flex;
-      width: 16px;
-      height: 16px;
+      align-items: center;
+      justify-content: center;
+      width: 15px;
+      height: 15px;
     }
-    .state-pulse-dot {
+    .rt-server-state svg {
+      width: 14px;
+      height: 14px;
+      stroke-width: 1.8;
+      opacity: 0.88;
+    }
+    .rt-state-icon.starting .rt-server-state svg {
+      animation: spin 1.2s linear infinite;
+    }
+    .rt-server-state-dot {
       position: absolute;
-      top: -3px;
-      right: -3px;
-      width: 6px;
-      height: 6px;
+      right: -1px;
+      bottom: -1px;
+      width: 5px;
+      height: 5px;
       border-radius: 999px;
+      border: 1px solid var(--bg-soft);
       background: currentColor;
+    }
+    .rt-server-state-dot.connected {
+      color: var(--success);
+    }
+    .rt-server-state-dot.external {
+      color: var(--blue-400);
+    }
+    .rt-server-state-dot.starting {
+      color: var(--amber-400);
+    }
+    .rt-server-state-dot.failed {
+      color: var(--danger-500);
+    }
+    .rt-server-state-dot.stopped {
+      color: var(--muted);
+      background: transparent;
+      border-color: currentColor;
+    }
+    .rt-server-state-dot.pulse {
       animation: pulse 2s cubic-bezier(.4, 0, .6, 1) infinite;
     }
     .rt-info-icon {
@@ -951,13 +970,6 @@ export function renderToolBoxWebview(webview: vscode.Webview, model: any): strin
     }
     .workspace-folders.empty-description {
       min-height: 0;
-    }
-    .workspace-language-divider {
-      display: block;
-      height: 1px;
-      width: 100%;
-      background: color-mix(in srgb, var(--border) 62%, transparent);
-      margin: 1px 0 0;
     }
     .workspace-language-bar {
       display: flex;
