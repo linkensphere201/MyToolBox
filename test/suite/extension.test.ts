@@ -164,7 +164,7 @@ suite('CodeOps Panel Extension Integration Tests', () => {
       inputs?: Array<string | undefined>;
       picks?: Array<string | undefined>;
       warnings?: Array<string | undefined>;
-      folders?: Array<string | undefined>;
+      folders?: Array<string | vscode.Uri | undefined>;
     },
     run: () => Promise<T>
   ): Promise<T> => {
@@ -182,7 +182,7 @@ suite('CodeOps Panel Extension Integration Tests', () => {
     win.showWarningMessage = (async () => warnings.shift()) as typeof vscode.window.showWarningMessage;
     win.showOpenDialog = (async () => {
       const folder = folders.shift();
-      return folder === undefined ? undefined : [vscode.Uri.file(folder)];
+      return folder === undefined ? undefined : [typeof folder === 'string' ? vscode.Uri.file(folder) : folder];
     }) as typeof vscode.window.showOpenDialog;
 
     try {
@@ -727,6 +727,22 @@ suite('CodeOps Panel Extension Integration Tests', () => {
 
     await vscode.commands.executeCommand('reverseProxy.test.removeFavoriteWorkspace', workspaceFile);
     created = readTestConfig() as { favoriteWorkspaces?: { workspaceFiles?: string[] } };
+    assert.deepStrictEqual(created.favoriteWorkspaces?.workspaceFiles, []);
+  });
+
+  test('favorite workspaces add should reject remote workspace files', async () => {
+    const remoteWorkspace = vscode.Uri.parse('vscode-remote://ssh-remote+example/home/user/remote.code-workspace');
+    writeFavoriteWorkspacesConfig([]);
+    await config.update('configFile', testConfigFilePath, vscode.ConfigurationTarget.Global);
+
+    await withWindowPrompts(
+      { folders: [remoteWorkspace] },
+      async () => {
+        await vscode.commands.executeCommand('reverseProxy.test.addFavoriteWorkspace');
+      }
+    );
+
+    const created = readTestConfig() as { favoriteWorkspaces?: { workspaceFiles?: string[] } };
     assert.deepStrictEqual(created.favoriteWorkspaces?.workspaceFiles, []);
   });
 

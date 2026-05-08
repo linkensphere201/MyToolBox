@@ -2167,6 +2167,7 @@ function validateRequiredInput(fieldName: string): (value: string) => string | u
 async function promptRequiredInput(options: vscode.InputBoxOptions & { fieldName: string }): Promise<string | undefined> {
   const value = await vscode.window.showInputBox({
     ...options,
+    ignoreFocusOut: true,
     validateInput: options.validateInput ?? validateRequiredInput(options.fieldName)
   });
   const trimmed = value?.trim();
@@ -2177,6 +2178,7 @@ async function promptPort(fieldName: string, value: string): Promise<number | un
   const input = await vscode.window.showInputBox({
     prompt: fieldName,
     value,
+    ignoreFocusOut: true,
     validateInput: validatePortInput(fieldName)
   });
   return input === undefined ? undefined : parsePortInput(input, fieldName);
@@ -2198,6 +2200,7 @@ async function runBootstrapWizard(): Promise<BootstrapToolBoxConfig | undefined>
   const localTargetInput = await vscode.window.showInputBox({
     prompt: 'Reverse proxy local target (localHost:localPort)',
     value: '127.0.0.1:7897',
+    ignoreFocusOut: true,
     validateInput: validateLocalTargetInput
   });
   if (localTargetInput === undefined) {
@@ -2209,7 +2212,10 @@ async function runBootstrapWizard(): Promise<BootstrapToolBoxConfig | undefined>
   while (true) {
     const action = await vscode.window.showQuickPick(
       ['Add remote', 'Finish remotes'],
-      { placeHolder: remotes.length === 0 ? 'Add a reverse proxy remote or finish with none.' : 'Add another remote or finish.' }
+      {
+        placeHolder: remotes.length === 0 ? 'Add a reverse proxy remote or finish with none.' : 'Add another remote or finish.',
+        ignoreFocusOut: true
+      }
     );
     if (!action) {
       return undefined;
@@ -2254,7 +2260,8 @@ async function runBootstrapWizard(): Promise<BootstrapToolBoxConfig | undefined>
   }
 
   const selectedMode = await vscode.window.showQuickPick(['local', 'ssh'], {
-    placeHolder: 'Pinned Projects mode'
+    placeHolder: 'Pinned Projects mode',
+    ignoreFocusOut: true
   });
   if (!selectedMode) {
     return undefined;
@@ -2294,7 +2301,10 @@ async function runBootstrapWizard(): Promise<BootstrapToolBoxConfig | undefined>
   while (true) {
     const action = await vscode.window.showQuickPick(
       ['Add repo', 'Finish repos'],
-      { placeHolder: repoNames.length === 0 ? 'Add a repo name or finish with none.' : 'Add another repo or finish.' }
+      {
+        placeHolder: repoNames.length === 0 ? 'Add a repo name or finish with none.' : 'Add another repo or finish.',
+        ignoreFocusOut: true
+      }
     );
     if (!action) {
       return undefined;
@@ -2373,7 +2383,8 @@ async function openSettingsConfig(): Promise<string | undefined> {
 
   if (!(await configFileExists(configUri))) {
     const action = await vscode.window.showQuickPick(['Create default config', 'Run bootstrap wizard'], {
-      placeHolder: 'ToolBox config does not exist.'
+      placeHolder: 'ToolBox config does not exist.',
+      ignoreFocusOut: true
     });
     if (!action) {
       return undefined;
@@ -2395,6 +2406,7 @@ async function openSettingsConfig(): Promise<string | undefined> {
 
 async function addFavoriteWorkspace(): Promise<string | undefined> {
   const selection = await vscode.window.showOpenDialog({
+    defaultUri: vscode.Uri.file(os.homedir()),
     canSelectFiles: true,
     canSelectFolders: false,
     canSelectMany: false,
@@ -2403,10 +2415,15 @@ async function addFavoriteWorkspace(): Promise<string | undefined> {
     },
     title: 'Select a VS Code workspace file'
   });
-  const selected = selection?.[0]?.fsPath;
-  if (!selected) {
+  const selectedUri = selection?.[0];
+  if (!selectedUri) {
     return undefined;
   }
+  if (selectedUri.scheme !== 'file') {
+    void vscode.window.showErrorMessage('Favorite workspaces must be local .code-workspace files.');
+    return undefined;
+  }
+  const selected = selectedUri.fsPath;
   if (path.extname(selected).toLowerCase() !== '.code-workspace') {
     void vscode.window.showErrorMessage('Select a .code-workspace file.');
     return undefined;
