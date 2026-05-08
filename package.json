@@ -4,6 +4,8 @@
   "description": "CodeOps dashboard panel for reverse tunnels and pinned project status.",
   "version": "0.1.0",
   "publisher": "local",
+  "license": "MIT",
+  "icon": "media/Icon1.png",
   "repository": {
     "type": "git",
     "url": "https://github.com/linkensphere201/vscode-toolbox.git"

@@ -1,89 +1,31 @@
-﻿# CodeOps Panel VS Code Extension
+﻿# CodeOps Panel
 
-CodeOps Panel 是一个运行在 VS Code UI Host 侧的本地工作台扩展。当前包含两类能力：
+<p align="center">
+  <img src="media/Icon1.png" alt="CodeOps Panel icon" width="128" height="128">
+</p>
 
-- `Reverse Tunnel Proxies`：管理 SSH 反向隧道（`ssh -N -R`）。
-- `Pinned Projects`：从统一 CodeOps Panel 配置文件中读取重点项目列表，并展示每个 Git 仓库的分支、同步状态和工作区干净程度。
-- `Favorite Workspaces`：收藏 `.code-workspace` 文件，并一键用新 VS Code 窗口打开。
+CodeOps Panel is a VS Code sidebar dashboard for local development operations. It keeps reverse SSH tunnels, important Git repositories, and favorite workspace files in one compact panel.
 
-## 主要功能
+## Features
 
-### Reverse Tunnel Proxies
+- **Reverse Tunnel Proxies**: start and stop configured SSH reverse tunnels from the sidebar.
+- **Pinned Projects**: refresh local or SSH-hosted Git repositories and inspect branch, sync, and working tree status.
+- **Favorite Workspaces**: save `.code-workspace` files and reopen them in a new VS Code window.
+- **Unified configuration**: use one JSON file for tunnels, pinned projects, and favorite workspaces.
+- **Bootstrap wizard**: create an initial configuration through VS Code prompts.
 
-- 在侧边栏 `CodeOps Panel` -> `Reverse Tunnel Proxies` 中逐行开关多个远端隧道
-- 状态栏显示已启动 remote 数量
-- 内置日志入口（`Open Logs`）
-- 内置配置入口（`Settings`）
-- 启动前自动检查本机 `ssh` 命令可用性
-- 远端端口占用时给出明确错误提示
-- 支持在 remote-ssh 窗口中使用，SSH 进程始终在本地笔记本（UI Host）运行
+## Quick Start
 
-### Pinned Projects
+1. Install CodeOps Panel.
+2. Open the `CodeOps Panel` activity bar view.
+3. Click `Bootstrap` to create a configuration file, or click `Settings` to open the configured file.
+4. Use `Start`, `Stop`, `Refresh`, and `Add` from the sidebar panel.
 
-- 在侧边栏 `CodeOps Panel` -> `Pinned Projects` 中查看重点项目状态
-- 支持本地仓库和 SSH 远端仓库两种模式
-- `Refresh` 会执行 `git fetch --prune --quiet` 和 `git status --porcelain=v2 --branch`
-- 展示 clean/dirty、synced/ahead/behind/diverged/no upstream 等状态
-- 点击项目行可查看详细状态输出
-- 未刷新前先显示配置里的 repo name，刷新后补充分支、远端同步和工作区状态
+The default configuration path is `.vscode/mytoolbox.config.json`. You can override it with the VS Code setting `myToolbox.configFile`.
 
-### Favorite Workspaces
+## Configuration
 
-- 在侧边栏 `CodeOps Panel` -> `Favorite Workspaces` 中查看收藏的 VS Code workspace
-- 点击 `Add` 选择 `.code-workspace` 文件加入收藏
-- 点击卡片会用新 VS Code 窗口打开该 workspace
-- 卡片描述由 workspace folders 摘要和项目 README 首句自动生成
-- 卡片右上角可移除收藏
-
-## 交互说明
-
-### 侧边栏
-
-Activity Bar 图标：`CodeOps Panel`
-视图名称：`CodeOps Panel`
-
-分组：
-
-- `Reverse Tunnel Proxies`
-- `Pinned Projects`
-- `Favorite Workspaces`
-
-顶部工具栏：
-
-- `Bootstrap`：用交互式初始化向导生成统一配置文件
-- `Logs`：打开扩展输出日志
-- `Settings`：打开/创建统一配置文件
-
-`Reverse Tunnel Proxies` 表格行为：
-
-- `Proxy`：显示状态图标、`remoteHost:remotePort` 和详情浮层入口
-- `Action`：插件管理的 remote 可逐行 `Start` / `Stop`
-- 外部已存在的 tunnel 显示为 `Started`，但不可从插件停止
-
-`Pinned Projects` 表格行为：
-
-- `Repo`：展示仓库显示名
-- `Branch`：展示当前分支
-- `Remote`：展示 upstream 同步状态
-- `State`：展示 clean/dirty/unavailable
-- `Refresh`：刷新全部配置仓库状态
-
-`Favorite Workspaces` 卡片行为：
-
-- `Add`：选择 `.code-workspace` 文件进入收藏
-- 卡片主体：展示 workspace 名称和自动摘要
-- 卡片点击：在新 VS Code 窗口打开 workspace
-- 卡片右上角：移除该收藏
-
-## CodeOps Panel 配置
-
-扩展设置只保留 1 项：
-
-- `myToolbox.configFile`（默认：`.vscode/mytoolbox.config.json`）
-
-该设置指向整个插件的 JSON 配置文件路径。默认值是 workspace 级本地配置 `.vscode/mytoolbox.config.json`，通常不进入 Git。若为相对路径：本地窗口优先按工作区解析，remote-ssh 窗口按本地用户目录解析；若未命中，则回退到扩展内置 `resources/mytoolbox.config.json`。
-
-配置文件同时包含 `ReverseTunnel`、`keyProjects` 和 `favoriteWorkspaces` 三个顶层节点：
+CodeOps Panel uses a single JSON file with three top-level sections:
 
 ```json
 {
@@ -94,9 +36,9 @@ Activity Bar 图标：`CodeOps Panel`
     "localPort": 7897,
     "remotes": [
       {
-        "remoteHost": "FOO_ADDRESS",
-        "remotePort": 4001,
-        "remoteUser": "FOO_USER",
+        "remoteHost": "example.com",
+        "remotePort": 22,
+        "remoteUser": "user",
         "remoteBindPort": 17897,
         "identityFile": ""
       }
@@ -105,7 +47,7 @@ Activity Bar 图标：`CodeOps Panel`
   "keyProjects": {
     "mode": "local",
     "rootDir": "E:/projects",
-    "repoNames": ["MyToolBox", "another-project"],
+    "repoNames": ["my-repo"],
     "sshTarget": "",
     "sshPort": 22,
     "gitPath": "git",
@@ -117,114 +59,44 @@ Activity Bar 图标：`CodeOps Panel`
 }
 ```
 
-等价 SSH 命令：
+### Reverse Tunnel Proxies
+
+Each remote maps to an SSH reverse tunnel equivalent to:
 
 ```bash
-ssh -N -p 4001 -R 17897:127.0.0.1:7897 FOO_USER@FOO_ADDRESS
+ssh -N -p 22 -R 17897:127.0.0.1:7897 user@example.com
 ```
 
-### Settings 按钮行为
+The extension checks that the local `ssh` command is available before starting a tunnel. Tunnels started outside the extension may be shown as already running, but CodeOps Panel will not stop external tunnels.
 
-当 `myToolbox.configFile` 指向的文件不存在时：
+### Pinned Projects
 
-1. 按当前设置值解析目标路径；如果设置未显式填写，则使用默认 `.vscode/mytoolbox.config.json`
-2. 提供 `Create default config` 和 `Run bootstrap wizard` 两个选项
-3. 选择默认配置时，在目标路径创建示例配置文件（带默认模板）
-4. 选择初始化向导时，按对话输入生成 `ReverseTunnel` 和 `keyProjects`
-5. 自动更新 `myToolbox.configFile` 到该文件绝对路径并打开文件
+Pinned Projects can run in `local` or `ssh` mode.
 
-### Bootstrap 初始化向导
+- `local`: checks repositories under `rootDir` on the local machine.
+- `ssh`: runs Git checks through local SSH against `sshTarget`.
 
-Bootstrap 使用 VS Code 原生输入框逐步收集：
+Refresh runs Git status checks and shows clean/dirty state plus upstream sync labels such as `synced`, `ahead`, `behind`, `diverged`, and `no upstream`.
 
-- Reverse Tunnel：`localHost:localPort`、零个或多个 remote 的地址/端口/用户名/绑定端口
-- Pinned Projects：`local` 或 `ssh` 模式、SSH 目标（仅 SSH 模式）、`rootDir`、零个或多个 `repoNames`
-- `local` 模式下 `rootDir` 使用文件夹选择器；`ssh` 模式下 `rootDir` 作为远端路径手动输入
+### Favorite Workspaces
 
-若目标配置文件已存在，Bootstrap 会先确认是否覆盖；取消则不会修改文件。
+Use `Add` to select a `.code-workspace` file. The card opens that workspace in a new VS Code window. Relative paths configured by hand are resolved from the configuration file directory.
 
-## Pinned Projects 配置
+## Troubleshooting
 
-Pinned Projects 使用统一配置文件中的 `keyProjects` 节点。
+- If Git status is unavailable, confirm that `rootDir` and `repoNames` point to real Git repositories.
+- If SSH mode fails, confirm that `sshPath` works locally, `sshTarget` is reachable, and Git is installed on the remote host.
+- If a tunnel fails to start, check whether the remote bind port is already in use and whether `localHost:localPort` is reachable.
+- If the settings file does not open, confirm the `myToolbox.configFile` path. Relative paths resolve differently in local and Remote SSH windows.
 
-字段说明：
+## Limitations
 
-- `mode`：`local` 或 `ssh`。非 `ssh` 值会按 `local` 处理。
-- `rootDir`：项目根目录。`repoNames` 中的每一项会拼到该目录下；当 `repoNames` 包含 `"."` 时直接使用 `rootDir` 本身。
-- `repoNames`：重点项目列表。
-- `sshTarget`：SSH 模式下的目标，例如 `user@example.com`。
-- `sshPort`：SSH 端口，默认 `22`。
-- `gitPath`：本地模式使用的 Git 命令路径，默认 `git`。
-- `sshPath`：SSH 模式使用的 SSH 命令路径，默认 `ssh`。
+- CodeOps Panel only stops reverse tunnels that it started.
+- SSH project refresh depends on a working remote shell and Git installation.
+- The configuration file can contain private hosts and local paths; keep personal configs out of source control when needed.
 
-SSH 模式示例：
+## Chinese Documentation
 
-```json
-{
-  "keyProjects": {
-    "mode": "ssh",
-    "rootDir": "/home/user/projects",
-    "repoNames": ["service-a", "service-b"],
-    "sshTarget": "user@example.com",
-    "sshPort": 22,
-    "gitPath": "git",
-    "sshPath": "ssh"
-  }
-}
-```
+See `readme-cn.md` for Chinese usage documentation.
 
-在 SSH 模式下，扩展会通过本地 `ssh` 到远端执行 Git 状态检查；远端需要可运行 `git`。
 
-## Favorite Workspaces 配置
-
-Favorite Workspaces 使用统一配置文件中的 `favoriteWorkspaces.workspaceFiles` 列表。
-
-```json
-{
-  "favoriteWorkspaces": {
-    "workspaceFiles": [
-      "E:/projects/frontends.code-workspace",
-      "E:/projects/backend-services.code-workspace"
-    ]
-  }
-}
-```
-
-列表项保存 `.code-workspace` 文件路径。添加按钮会写入绝对路径；手动配置相对路径时，会按配置文件所在目录解析。
-
-## 本地开发
-
-```bash
-npm install
-npm run compile
-npm test
-```
-
-按 `F5` 启动 Extension Development Host。
-
-常用脚本：
-
-- `npm run compile`：编译扩展源码到 `out/`
-- `npm run compile-tests`：编译测试源码
-- `npm test`：编译并运行 VS Code 扩展测试
-
-## 打包 VSIX
-
-```bash
-npm run package:vsix
-```
-
-打包脚本会读取 `package.json` 的版本号，并输出类似 `release-artifacts/code-ops-panel-extension-v0.1.vsix` 的文件。
-
-项目约定：代码变更后默认构建 VSIX 供测试；仅文档变更或仅 `media/` 变更可跳过。
-
-## 目录结构
-
-- `src/app.ts`：扩展激活入口和主要业务编排
-- `src/reverseTunnel/`：反向隧道配置和服务封装
-- `src/pinnedProjects/`：重点项目 Git 状态和 SSH 批处理逻辑
-- `src/webview/`：CodeOps Panel 侧边栏 Webview 渲染和消息处理
-- `src/shared/`：日志、校验等共享工具
-- `test/suite/`：扩展测试和纯函数测试
-- `resources/`：默认 CodeOps Panel 配置模板
-- `media/`：Activity Bar 图标

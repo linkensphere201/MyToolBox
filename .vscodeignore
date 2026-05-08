@@ -1,8 +1,12 @@
 .git/**
 .github/**
+.gitignore
 .vscode/**
 .vscode-test/**
 .npm-cache/**
+AGENTS.md
+ai/**
+docs/**
 node_modules/**
 release-artifacts/**
 src/**
