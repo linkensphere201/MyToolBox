@@ -6,6 +6,12 @@
 
 CodeOps Panel is a VS Code sidebar dashboard for local development operations. It keeps reverse SSH tunnels, important Git repositories, and favorite workspace files in one compact panel.
 
+## Screenshot
+
+<p align="center">
+  <img src="media/screenshot.png" alt="CodeOps Panel dashboard screenshot">
+</p>
+
 ## Features
 
 - **Reverse Tunnel Proxies**: start and stop configured SSH reverse tunnels from the sidebar.
