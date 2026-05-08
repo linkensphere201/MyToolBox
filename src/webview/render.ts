@@ -17,64 +17,116 @@ function createNonce(): string {
   return Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
 }
 
+function iconSvg(name: string, className = ''): string {
+  const common = 'class="lucide ' + escapeHtml(className) + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" focusable="false" aria-hidden="true"';
+  const nodes: Record<string, string> = {
+    activity: '<path d="M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.49 12H2"/>',
+    check: '<path d="M20 6 9 17l-5-5"/>',
+    gitBranch: '<line x1="6" x2="6" y1="3" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/>',
+    info: '<circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/>',
+    linkOff: '<path d="M9 17H7A5 5 0 0 1 7 7"/><path d="M15 7h2a5 5 0 0 1 4 8"/><line x1="8" x2="12" y1="12" y2="12"/><line x1="2" x2="22" y1="2" y2="22"/>',
+    list: '<path d="M3 12h.01"/><path d="M3 18h.01"/><path d="M3 6h.01"/><path d="M8 12h13"/><path d="M8 18h13"/><path d="M8 6h13"/>',
+    loader: '<path d="M21 12a9 9 0 1 1-6.219-8.56"/>',
+    play: '<polygon points="6 3 20 12 6 21 6 3"/>',
+    rocket: '<path d="M4.5 16.5c-1.5 1.26-2 3.75-2 3.75s2.49-.5 3.75-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09z"/><path d="m12 15-3-3a22 22 0 0 1 2-4.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-5.05 11a22 22 0 0 1-4.95 2z"/><path d="M9 12H4s.55-3.03 2-4c1.62-1.08 5 0 5 0"/><path d="M12 15v5s3.03-.55 4-2c1.08-1.62 0-5 0-5"/>',
+    refresh: '<path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/>',
+    settings: '<path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/>',
+    square: '<rect width="18" height="18" x="3" y="3" rx="2"/>',
+    x: '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>'
+  };
+
+  return '<svg ' + common + '>' + (nodes[name] ?? '') + '</svg>';
+}
+
 function getReverseTunnelActionIconSvg(actionId: string): string {
-  if (actionId === 'logs') {
-    return '<svg viewBox="0 0 16 16" fill="currentColor" focusable="false" aria-hidden="true"><path d="M5 10.5a.5.5 0 0 1 .5-.5h2a.5.5 0 0 1 0 1h-2a.5.5 0 0 1-.5-.5m0-2a.5.5 0 0 1 .5-.5h5a.5.5 0 0 1 0 1h-5a.5.5 0 0 1-.5-.5m0-2a.5.5 0 0 1 .5-.5h5a.5.5 0 0 1 0 1h-5a.5.5 0 0 1-.5-.5m0-2a.5.5 0 0 1 .5-.5h5a.5.5 0 0 1 0 1h-5a.5.5 0 0 1-.5-.5"/><path d="M3 0h10a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2v-1h1v1a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1V2a1 1 0 0 0-1-1H3a1 1 0 0 0-1 1v1H1V2a2 2 0 0 1 2-2"/><path d="M1 5v-.5a.5.5 0 0 1 1 0V5h.5a.5.5 0 0 1 0 1h-2a.5.5 0 0 1 0-1zm0 3v-.5a.5.5 0 0 1 1 0V8h.5a.5.5 0 0 1 0 1h-2a.5.5 0 0 1 0-1zm0 3v-.5a.5.5 0 0 1 1 0v.5h.5a.5.5 0 0 1 0 1h-2a.5.5 0 0 1 0-1z"/></svg>';
+  if (actionId === 'bootstrap') {
+    return iconSvg('rocket');
   }
-  return '<svg viewBox="0 0 16 16" fill="currentColor" focusable="false" aria-hidden="true"><path d="M7.068.727c.243-.97 1.62-.97 1.864 0l.071.286a.96.96 0 0 0 1.622.434l.205-.211c.695-.719 1.888-.03 1.613.931l-.08.284a.96.96 0 0 0 1.187 1.187l.283-.081c.96-.275 1.65.918.931 1.613l-.211.205a.96.96 0 0 0 .434 1.622l.286.071c.97.243.97 1.62 0 1.864l-.286.071a.96.96 0 0 0-.434 1.622l.211.205c.719.695.03 1.888-.931 1.613l-.284-.08a.96.96 0 0 0-1.187 1.187l.081.283c.275.96-.918 1.65-1.613.931l-.205-.211a.96.96 0 0 0-1.622.434l-.071.286c-.243.97-1.62.97-1.864 0l-.071-.286a.96.96 0 0 0-1.622-.434l-.205.211c-.695.719-1.888.03-1.613-.931l.08-.284a.96.96 0 0 0-1.186-1.187l-.284.081c-.96.275-1.65-.918-.931-1.613l.211-.205a.96.96 0 0 0-.434-1.622l-.286-.071c-.97-.243-.97-1.62 0-1.864l.286-.071a.96.96 0 0 0 .434-1.622l-.211-.205c-.719-.695-.03-1.888.931-1.613l.284.08a.96.96 0 0 0 1.187-1.186l-.081-.284c-.275-.96.918-1.65 1.613-.931l.205.211a.96.96 0 0 0 1.622-.434zM12.973 8.5H8.25l-2.834 3.779A4.998 4.998 0 0 0 12.973 8.5m0-1a4.998 4.998 0 0 0-7.557-3.779l2.834 3.78zM5.048 3.967l-.087.065zm-.431.355A4.98 4.98 0 0 0 3.002 8c0 1.455.622 2.765 1.615 3.678L7.375 8zm.344 7.646.087.065z"/></svg>';
+  return actionId === 'logs' ? iconSvg('list') : iconSvg('settings');
 }
 
 function getReverseTunnelStateIconSvg(tone: 'connected' | 'external' | 'starting' | 'failed' | 'stopped'): string {
   if (tone === 'connected') {
-    return '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" focusable="false" aria-hidden="true"><path d="M8 1.75v6"/><path d="M4.7 4.55a5 5 0 1 0 6.6 0"/></svg>';
+    return '<span class="state-pulse-wrap">' + iconSvg('activity') + '<span class="state-pulse-dot"></span></span>';
   }
   if (tone === 'external') {
-    return '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.45" stroke-linecap="round" stroke-linejoin="round" focusable="false" aria-hidden="true"><path d="M8 1.8v5.2"/><path d="M4.7 4.9a4.8 4.8 0 1 0 6.6 0"/><path d="M2.6 8.8 1.4 10a2 2 0 0 0 2.8 2.8l1.1-1.1"/><path d="M10.7 4.3 11.8 3.2A2 2 0 0 1 14.6 6l-1.2 1.2"/></svg>';
+    return '<span class="state-pulse-wrap">' + iconSvg('activity') + '<span class="state-pulse-dot"></span></span>';
   }
   if (tone === 'starting') {
-    return '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" focusable="false" aria-hidden="true"><path d="M13.2 8a5.2 5.2 0 0 1-8.9 3.7"/><path d="M2.8 8a5.2 5.2 0 0 1 8.9-3.7"/><path d="M11.7 1.9v2.4H9.3"/><path d="M4.3 14.1v-2.4h2.4"/></svg>';
+    return iconSvg('loader');
   }
   if (tone === 'failed') {
-    return '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round" focusable="false" aria-hidden="true"><path d="M8 1.9 14.4 13a1 1 0 0 1-.9 1.5h-11a1 1 0 0 1-.9-1.5z"/><path d="M8 5.8v3.2"/><path d="M8 12h.01"/></svg>';
+    return iconSvg('x');
   }
-  return '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" focusable="false" aria-hidden="true"><path d="M8 1.75v6"/><path d="M4.7 4.55a5 5 0 1 0 6.6 0"/><path d="M3 13 13 3"/></svg>';
-}
-
-function getInfoIconSvg(): string {
-  return '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.45" stroke-linecap="round" stroke-linejoin="round" focusable="false" aria-hidden="true"><circle cx="8" cy="8" r="6"/><path d="M8 7.4v3.6"/><path d="M8 5h.01"/></svg>';
+  return iconSvg('linkOff');
 }
 
 function getKeyProjectsToolbarIconSvg(actionId: string): string {
-  if (actionId === 'refresh') {
-    return '<svg viewBox="0 0 16 16" fill="currentColor" focusable="false" aria-hidden="true"><path d="M8 3a5 5 0 1 0 4.546 2.914.5.5 0 0 1 .908-.418A6 6 0 1 1 8 2z"/><path d="M8 4.466V.534a.25.25 0 0 1 .41-.192l2.36 1.966c.12.1.12.284 0 .384L8.41 4.658A.25.25 0 0 1 8 4.466"/></svg>';
-  }
-  return '<svg viewBox="0 0 16 16" fill="currentColor" focusable="false" aria-hidden="true"><path d="M7.068.727c.243-.97 1.62-.97 1.864 0l.071.286a.96.96 0 0 0 1.622.434l.205-.211c.695-.719 1.888-.03 1.613.931l-.08.284a.96.96 0 0 0 1.187 1.187l.283-.081c.96-.275 1.65.918.931 1.613l-.211.205a.96.96 0 0 0 .434 1.622l.286.071c.97.243.97 1.62 0 1.864l-.286.071a.96.96 0 0 0-.434 1.622l.211.205c.719.695.03 1.888-.931 1.613l-.284-.08a.96.96 0 0 0-1.187 1.187l.081.283c.275.96-.918 1.65-1.613.931l-.205-.211a.96.96 0 0 0-1.622.434l-.071.286c-.243.97-1.62.97-1.864 0l-.071-.286a.96.96 0 0 0-1.622-.434l-.205.211c-.695.719-1.888.03-1.613-.931l.08-.284a.96.96 0 0 0-1.186-1.187l-.284.081c-.96.275-1.65-.918-.931-1.613l.211-.205a.96.96 0 0 0-.434-1.622l-.286-.071c-.97-.243-.97-1.62 0-1.864l.286-.071a.96.96 0 0 0 .434-1.622l-.211-.205c-.719-.695-.03-1.888.931-1.613l.284.08a.96.96 0 0 0 1.187-1.186l-.081-.284c-.275-.96.918-1.65 1.613-.931l.205.211a.96.96 0 0 0 1.622-.434zM12.973 8.5H8.25l-2.834 3.779A4.998 4.998 0 0 0 12.973 8.5m0-1a4.998 4.998 0 0 0-7.557-3.779l2.834 3.78zM5.048 3.967l-.087.065zm-.431.355A4.98 4.98 0 0 0 3.002 8c0 1.455.622 2.765 1.615 3.678L7.375 8zm.344 7.646.087.065z"/></svg>';
+  return actionId === 'refresh' ? iconSvg('refresh') : iconSvg('settings');
 }
+
+function getPinnedProjectStateIconSvg(row: any): string {
+  const remoteLabel = String(row.remoteLabel ?? '').toLowerCase();
+  if (!row.available) {
+    return iconSvg('x');
+  }
+  if (remoteLabel.startsWith('synced')) {
+    return iconSvg('check');
+  }
+  if (remoteLabel.startsWith('ahead')) {
+    return iconSvg('gitBranch');
+  }
+  if (remoteLabel.startsWith('behind')) {
+    return iconSvg('refresh');
+  }
+  if (remoteLabel.startsWith('diverged')) {
+    return iconSvg('x');
+  }
+  return row.clean ? iconSvg('check') : iconSvg('gitBranch');
+}
+
+function getPinnedProjectTone(row: any): string {
+  const remoteLabel = String(row.remoteLabel ?? '').toLowerCase();
+  if (!row.available) {
+    return 'unavailable';
+  }
+  if (remoteLabel.startsWith('synced')) {
+    return 'synced';
+  }
+  if (remoteLabel.startsWith('ahead')) {
+    return 'ahead';
+  }
+  if (remoteLabel.startsWith('behind')) {
+    return 'behind';
+  }
+  if (remoteLabel.startsWith('diverged')) {
+    return 'diverged';
+  }
+  return row.clean ? 'synced' : 'dirty';
+}
+
 export function renderToolBoxWebview(webview: vscode.Webview, model: any): string {
   const nonce = createNonce();
-  const reverseActions = model.reverseTunnel.actions
+  const topActions = model.reverseTunnel.actions
     .map((action: any) => {
-      const classes = ['action'];
       const icon = getReverseTunnelActionIconSvg(action.id);
-      return '<button class="' + classes.join(' ') + '" data-action="' + escapeHtml(action.id) + '" title="' + escapeHtml(action.label) + '" aria-label="' + escapeHtml(action.label) + '" ' + (action.enabled ? '' : 'disabled') + '><span class="action-icon" aria-hidden="true">' + icon + '</span></button>';
+      return '<button class="chrome-button" data-action="' + escapeHtml(action.id) + '" title="' + escapeHtml(action.label) + '" aria-label="' + escapeHtml(action.label) + '" ' + (action.enabled ? '' : 'disabled') + '><span class="action-icon" aria-hidden="true">' + icon + '</span></button>';
     })
     .join('');
 
   const reverseRows = model.reverseTunnel.rows
-    .map((row: any) => {
+    .map((row: any, index: number) => {
       const stateIcon = getReverseTunnelStateIconSvg(row.tone);
-      const infoIcon = getInfoIconSvg();
       const tooltip = escapeHtmlAttribute(row.tooltip);
       const actionButton =
         row.action === 'none'
-          ? '<span class="rt-action-empty">-</span>'
-          : '<button class="rt-action-button ' + escapeHtml(row.action) + '" data-remote-action="' + escapeHtml(row.action) + '" data-remote-key="' + escapeHtml(row.key) + '" title="' + escapeHtml(row.actionLabel + ' ' + row.targetLabel) + '" ' + (row.actionEnabled ? '' : 'disabled') + '>' + escapeHtml(row.actionLabel) + '</button>';
+          ? '<button class="rt-action-button disabled" title="' + escapeHtml(row.stateLabel + ' ' + row.targetLabel) + '" disabled><span>' + escapeHtml(row.stateLabel) + '</span></button>'
+          : '<button class="rt-action-button ' + escapeHtml(row.action) + '" data-remote-action="' + escapeHtml(row.action) + '" data-remote-key="' + escapeHtml(row.key) + '" title="' + escapeHtml(row.actionLabel + ' ' + row.targetLabel) + '" ' + (row.actionEnabled ? '' : 'disabled') + '><span class="button-icon" aria-hidden="true">' + (row.action === 'start' ? iconSvg('play') : iconSvg('square')) + '</span><span>' + escapeHtml(row.actionLabel) + '</span></button>';
       return [
-        '<div class="rt-row">',
-        '  <span class="rt-cell rt-host"><code class="rt-host-code">' + escapeHtml(row.hostLabel) + '</code></span>',
-        '  <span class="rt-cell rt-state" title="' + escapeHtml(row.stateLabel) + '" aria-label="' + escapeHtml(row.stateLabel) + '"><span class="rt-state-icon ' + escapeHtml(row.tone) + '">' + stateIcon + '</span><span class="rt-info-icon" data-tooltip="' + tooltip + '" tabindex="0" aria-label="Tunnel details">' + infoIcon + '</span></span>',
-        '  <span class="rt-cell rt-action">' + actionButton + '</span>',
-        '</div>'
+        '<tr class="rt-row" style="animation-delay: ' + String(index * 50) + 'ms">',
+        '  <td class="cell proxy"><span class="rt-proxy-main"><span class="rt-state-icon ' + escapeHtml(row.tone) + '" title="' + escapeHtml(row.stateLabel) + '" aria-label="' + escapeHtml(row.stateLabel) + '">' + stateIcon + '</span><code class="rt-host-code">' + escapeHtml(row.hostLabel) + '</code><span class="rt-info-icon" data-tooltip="' + tooltip + '" tabindex="0" aria-label="Tunnel details">' + iconSvg('info') + '</span></span></td>',
+        '  <td class="cell rt-action">' + actionButton + '</td>',
+        '</tr>'
       ].join('');
     })
     .join('');
@@ -82,14 +134,16 @@ export function renderToolBoxWebview(webview: vscode.Webview, model: any): strin
   const reverseBody = model.reverseTunnel.issue
     ? '<div class="empty">' + escapeHtml(model.reverseTunnel.issue) + '</div>'
     : [
-        '<div class="rt-table">',
-        '  <div class="rt-rows">' + reverseRows + '</div>',
+        '<div class="table-scroll">',
+        '  <table class="dashboard-table rt-table">',
+        '    <thead><tr><th>Proxy</th><th class="align-right">Action</th></tr></thead>',
+        '    <tbody>' + reverseRows + '</tbody>',
+        '  </table>',
         '</div>'
       ].join('');
 
   const keyToolbar = [
-    '<button id="refresh" class="icon-button" title="' + escapeHtml(model.keyProjects.refreshing ? 'Refreshing...' : 'Refresh') + '" aria-label="' + escapeHtml(model.keyProjects.refreshing ? 'Refreshing...' : 'Refresh') + '" ' + (model.keyProjects.refreshing ? 'disabled' : '') + '><span class="action-icon" aria-hidden="true">' + getKeyProjectsToolbarIconSvg('refresh') + '</span></button>',
-    '<button id="key-settings" class="icon-button secondary" title="Settings" aria-label="Settings"><span class="action-icon" aria-hidden="true">' + getKeyProjectsToolbarIconSvg('settings') + '</span></button>'
+    '<button id="refresh" class="chrome-button" title="' + escapeHtml(model.keyProjects.refreshing ? 'Refreshing...' : 'Refresh') + '" aria-label="' + escapeHtml(model.keyProjects.refreshing ? 'Refreshing...' : 'Refresh') + '" ' + (model.keyProjects.refreshing ? 'disabled' : '') + '><span class="action-icon" aria-hidden="true">' + getKeyProjectsToolbarIconSvg('refresh') + '</span></button>'
   ].join('');
 
   const keyDetailsByRepo = JSON.stringify(
@@ -99,14 +153,24 @@ export function renderToolBoxWebview(webview: vscode.Webview, model: any): strin
   ).replace(/</g, '\u003C');
 
   const keyRows = model.keyProjects.rows
-    .map((row: any) => {
+    .map((row: any, index: number) => {
+      const tone = getPinnedProjectTone(row);
+      const stateCell = row.loaded
+        ? '<span class="project-state-icon ' + escapeHtml(tone) + '" title="' + escapeHtml(row.stateLabel) + '">' + getPinnedProjectStateIconSvg(row) + '</span>'
+        : '<span class="project-state-placeholder" title="Not loaded"></span>';
+      const branchCell = row.loaded
+        ? '<code class="branch-code">' + escapeHtml(row.branch) + '</code>'
+        : '<span class="muted-placeholder" aria-label="Not loaded"></span>';
+      const remoteCell = row.loaded
+        ? '<span class="remote-label ' + escapeHtml(tone) + '">' + escapeHtml(row.remoteLabel) + '</span>'
+        : '<span class="muted-placeholder" aria-label="Not loaded"></span>';
       return [
-        '<button class="table-row" data-repo="' + escapeHtml(row.configuredRepoName) + '">',
-        '  <span class="cell state" title="' + escapeHtml(row.stateLabel) + '">' + row.stateEmoji + '</span>',
-        '  <span class="cell repo">' + escapeHtml(row.repoName) + '</span>',
-        '  <span class="cell branch">' + escapeHtml(row.branch) + '</span>',
-        '  <span class="cell remote">' + escapeHtml(row.remoteLabel) + '</span>',
-        '</button>'
+        '<tr class="table-row project-row" data-repo="' + escapeHtml(row.configuredRepoName) + '" tabindex="0" style="animation-delay: ' + String(index * 50) + 'ms">',
+        '  <td class="cell state">' + stateCell + '</td>',
+        '  <td class="cell repo"><span class="repo-name">' + escapeHtml(row.repoName) + '</span></td>',
+        '  <td class="cell branch">' + branchCell + '</td>',
+        '  <td class="cell remote">' + remoteCell + '</td>',
+        '</tr>'
       ].join('');
     })
     .join('');
@@ -114,21 +178,18 @@ export function renderToolBoxWebview(webview: vscode.Webview, model: any): strin
   let keyBody = '';
   if (model.keyProjects.issue) {
     keyBody = '<div class="empty">' + escapeHtml(model.keyProjects.issue) + '</div>';
-  } else if (!model.keyProjects.configLoaded && !model.keyProjects.refreshing) {
-    keyBody = '<div class="empty">Click Refresh to load key project status.</div>';
   } else if (!model.keyProjects.rows.length && model.keyProjects.refreshing) {
     keyBody = '<div class="empty">Refreshing key projects...</div>';
   } else if (!model.keyProjects.rows.length) {
     keyBody = '<div class="empty">No key projects configured.</div>';
   } else {
     keyBody = [
-      '<div class="table-header">',
-      '  <span class="cell state">State</span>',
-      '  <span class="cell repo">Repo</span>',
-      '  <span class="cell branch">Branch</span>',
-      '  <span class="cell remote">Remote</span>',
-      '</div>',
-      '<div class="table-rows">' + keyRows + '</div>'
+      '<div class="table-scroll">',
+      '  <table class="dashboard-table key-table">',
+      '    <thead><tr><th>State</th><th>Repository</th><th>Branch</th><th>Remote</th></tr></thead>',
+      '    <tbody>' + keyRows + '</tbody>',
+      '  </table>',
+      '</div>'
     ].join('');
   }
 
@@ -139,447 +200,483 @@ export function renderToolBoxWebview(webview: vscode.Webview, model: any): strin
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}';" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <style>
+    :root {
+      color-scheme: dark;
+      --bg: #242628;
+      --bg-soft: #34383d;
+      --card: #2c2f33;
+      --card-hover: #34383d;
+      --code-bg: #34383d;
+      --text: #e4e7eb;
+      --muted: #a0a7b2;
+      --muted-2: #c2c8d0;
+      --border: #454a51;
+      --border-soft: rgba(69, 74, 81, 0.58);
+      --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.24);
+      --shadow-md: 0 8px 20px rgba(0, 0, 0, 0.28);
+      --start-400: #60a5fa;
+      --start-500: #3794ff;
+      --start-600: #256fc7;
+      --success: #57d68d;
+      --danger-400: #ff7474;
+      --danger-500: #f06161;
+      --danger-600: #c94a4a;
+      --purple-500: #c19cff;
+      --purple-600: #b180ff;
+      --amber-400: #f0c35a;
+      --amber-500: #d7a83f;
+      --blue-400: #66b3ff;
+      --blue-500: #3794ff;
+    }
+    * {
+      box-sizing: border-box;
+    }
     body {
       margin: 0;
+      min-height: 100vh;
       padding: 12px;
-      font-family: var(--vscode-font-family);
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       font-size: 12px;
-      color: var(--vscode-foreground);
-      background: var(--vscode-sideBar-background);
+      color: var(--text);
+      background: linear-gradient(135deg, var(--bg) 0%, #292c30 54%, #30343a 100%);
     }
+    .app-shell,
     .stack {
       display: grid;
-      gap: 8px;
+      gap: 14px;
     }
-    .panel {
-      border: 1px solid var(--vscode-panel-border);
-      border-radius: 10px;
-      overflow: hidden;
-      background: color-mix(in srgb, var(--vscode-editor-background) 86%, transparent);
-    }
-    .reverse-block {
-      display: grid;
-      gap: 5px;
-      justify-items: start;
-    }
-    .reverse-title {
-      padding-left: 0;
-      text-align: left;
-    }
-    .reverse-panel {
-      width: 100%;
-      justify-self: start;
-      margin-left: 0;
-      overflow: visible;
-    }
-    .key-block {
-      display: grid;
-      gap: 5px;
-      justify-items: stretch;
-    }
-    .key-title {
-      padding-left: 0;
-      text-align: left;
-    }
-    .key-panel {
-      width: 100%;
-    }
-    .panel-head {
+    .topbar {
       display: flex;
-      align-items: flex-start;
+      align-items: center;
       justify-content: space-between;
-      gap: 12px;
-      padding: 12px 12px 10px;
-      border-bottom: 1px solid color-mix(in srgb, var(--vscode-panel-border) 70%, transparent);
+      gap: 10px;
     }
-    .panel-title {
-      display: grid;
-      gap: 4px;
-      min-width: 0;
+    .app-title {
+      margin: 0;
+      overflow: hidden;
+      color: var(--text);
+      font-size: 15px;
+      line-height: 1.35;
+      font-weight: 700;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
-    .eyebrow {
-      font-size: 10px;
-      text-transform: uppercase;
-      letter-spacing: 0.08em;
-      color: var(--vscode-descriptionForeground);
+    .section-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 8px;
     }
-    .headline {
-      font-size: 14px;
+    .section-title {
+      margin: 0;
+      color: var(--text);
+      font-size: 13px;
+      line-height: 1.35;
       font-weight: 600;
+    }
+    .section-actions {
       display: flex;
       align-items: center;
-      gap: 8px;
-    }
-    .subline {
-      color: var(--vscode-descriptionForeground);
-      line-height: 1.4;
-    }
-    .tone {
-      width: 9px;
-      height: 9px;
-      border-radius: 999px;
-      background: var(--vscode-disabledForeground);
+      gap: 6px;
       flex: 0 0 auto;
     }
-    .tone.connected, .dot.clean { background: var(--vscode-testing-iconPassed); }
-    .tone.external { background: color-mix(in srgb, var(--vscode-testing-iconPassed) 62%, var(--vscode-descriptionForeground)); }
-    .tone.starting { background: var(--vscode-testing-iconQueued); }
-    .tone.failed, .dot.dirty { background: var(--vscode-testing-iconFailed); }
-    .tone.stopped, .dot.unavailable { background: var(--vscode-disabledForeground); }
-    .reverse-toolbar {
-      display: flex;
-      gap: 8px;
-      padding: 12px 12px 10px;
-    }
-    .rt-table {
-      padding: 0 12px 12px;
-    }
-    .rt-row {
-      display: grid;
-      grid-template-columns: 20ch minmax(16px, 1fr) 48px 54px;
-      gap: 8px;
-      align-items: center;
-      box-sizing: border-box;
-      width: 100%;
-      min-height: 30px;
-      padding: 7px 4px;
-    }
-    .rt-row {
-      border-bottom: 1px solid color-mix(in srgb, var(--vscode-panel-border) 65%, transparent);
-    }
-    .rt-row:last-child {
-      border-bottom: 0;
-    }
-    .rt-cell {
-      min-width: 0;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-    .rt-host {
-      display: inline-flex;
-      align-items: center;
-      width: 20ch;
-    }
-    .rt-host-code {
-      width: 20ch;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-      box-sizing: border-box;
-      padding: 2px 5px;
-      border: 1px solid color-mix(in srgb, var(--vscode-panel-border) 82%, transparent);
-      border-radius: 4px;
-      background: var(--vscode-textCodeBlock-background, color-mix(in srgb, var(--vscode-editor-background) 76%, var(--vscode-foreground) 6%));
-      color: var(--vscode-textPreformat-foreground, var(--vscode-foreground));
-      font-family: var(--vscode-editor-font-family, var(--vscode-font-family));
-      font-size: 11px;
-      line-height: 1.45;
-    }
-    .rt-state {
-      grid-column: 3;
-      display: inline-flex;
-      gap: 6px;
-      align-items: center;
-      justify-content: flex-start;
+    .card {
       overflow: visible;
+      border: 1px solid var(--border);
+      border-radius: 9px;
+      background: var(--card);
+      box-shadow: var(--shadow-sm);
     }
-    .rt-state-icon,
-    .rt-info-icon {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      width: 16px;
-      height: 16px;
-      flex: 0 0 auto;
-    }
-    .rt-state-icon svg,
-    .rt-info-icon svg {
-      width: 15px;
-      height: 15px;
-      display: block;
-    }
-    .rt-state-icon.connected { color: var(--vscode-testing-iconPassed); }
-    .rt-state-icon.external { color: color-mix(in srgb, var(--vscode-testing-iconPassed) 62%, var(--vscode-descriptionForeground)); }
-    .rt-state-icon.starting { color: var(--vscode-testing-iconQueued); }
-    .rt-state-icon.failed { color: var(--vscode-testing-iconFailed); }
-    .rt-state-icon.stopped { color: var(--vscode-disabledForeground); }
-    .rt-info-icon {
-      color: var(--vscode-descriptionForeground);
-      opacity: 0.86;
-      position: relative;
-      cursor: help;
-    }
-    .rt-info-icon:hover,
-    .rt-info-icon:focus {
-      opacity: 1;
-      color: var(--vscode-foreground);
-      z-index: 60;
-    }
-    .rt-info-icon:hover::after,
-    .rt-info-icon:focus::after {
-      content: attr(data-tooltip);
-      position: absolute;
-      z-index: 50;
-      top: calc(100% + 7px);
-      right: -8px;
-      width: min(280px, calc(100vw - 32px));
-      box-sizing: border-box;
-      padding: 9px 10px;
-      border: 1px solid var(--vscode-panel-border);
-      border-radius: 6px;
-      background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
-      color: var(--vscode-editorWidget-foreground, var(--vscode-foreground));
-      box-shadow: 0 8px 18px rgba(0, 0, 0, 0.22);
-      white-space: pre-wrap;
-      overflow-wrap: anywhere;
-      font-family: var(--vscode-editor-font-family, var(--vscode-font-family));
-      font-size: 11px;
-      line-height: 1.45;
-      text-align: left;
-      pointer-events: none;
-    }
-    .rt-info-icon:hover::before,
-    .rt-info-icon:focus::before {
-      content: '';
-      position: absolute;
-      z-index: 51;
-      top: calc(100% + 2px);
-      right: 4px;
-      border: 5px solid transparent;
-      border-bottom-color: var(--vscode-panel-border);
-      pointer-events: none;
-    }
-    .rt-action {
-      grid-column: 4;
-      display: inline-flex;
-      justify-content: flex-start;
-    }
-    .rt-action-button {
-      border: 1px solid var(--vscode-button-border, transparent);
-      border-radius: 6px;
-      height: 24px;
-      min-width: 48px;
-      padding: 0 8px;
-      background: var(--vscode-button-secondaryBackground, var(--vscode-button-background));
-      color: var(--vscode-button-secondaryForeground, var(--vscode-button-foreground));
-      cursor: pointer;
-      font: inherit;
-      transition: background-color 120ms ease, border-color 120ms ease, box-shadow 120ms ease, color 120ms ease, transform 120ms ease;
-    }
-    .rt-action-button.start {
-      color: var(--vscode-testing-iconPassed);
-    }
-    .rt-action-button.stop {
-      color: var(--vscode-testing-iconFailed);
-    }
-    .rt-action-button:hover:not(:disabled),
-    .rt-action-button:focus-visible:not(:disabled) {
-      background: color-mix(in srgb, var(--vscode-list-hoverBackground) 82%, var(--vscode-button-secondaryBackground, var(--vscode-button-background)));
-      border-color: color-mix(in srgb, currentColor 52%, var(--vscode-focusBorder));
-      box-shadow: 0 0 0 1px color-mix(in srgb, currentColor 24%, transparent);
-      transform: translateY(-1px);
-      outline: none;
-    }
-    .rt-action-button.start:hover:not(:disabled),
-    .rt-action-button.start:focus-visible:not(:disabled) {
-      background: color-mix(in srgb, var(--vscode-testing-iconPassed) 18%, var(--vscode-button-secondaryBackground, var(--vscode-button-background)));
-    }
-    .rt-action-button.stop:hover:not(:disabled),
-    .rt-action-button.stop:focus-visible:not(:disabled) {
-      background: color-mix(in srgb, var(--vscode-testing-iconFailed) 16%, var(--vscode-button-secondaryBackground, var(--vscode-button-background)));
-    }
-    .rt-action-button:active:not(:disabled) {
-      transform: translateY(0);
-      box-shadow: 0 0 0 1px color-mix(in srgb, currentColor 18%, transparent);
-    }
-    .rt-action-button:disabled {
-      cursor: default;
-      opacity: 0.6;
-    }
-    .rt-action-empty {
-      color: var(--vscode-descriptionForeground);
-      display: inline-flex;
-      width: 48px;
-      justify-content: center;
-    }
-    .actions {
-      display: inline-flex;
-      flex-wrap: wrap;
-      gap: 6px;
-      justify-content: flex-start;
-      align-items: center;
-      justify-self: start;
-      margin-top: 0;
-    }
-    button.action {
-      border: 1px solid var(--vscode-button-border, transparent);
-      background: var(--vscode-button-secondaryBackground, var(--vscode-button-background));
-      color: var(--vscode-button-secondaryForeground, var(--vscode-button-foreground));
-      border-radius: 6px;
+    .chrome-button {
       width: 30px;
       height: 30px;
-      padding: 0;
       display: inline-flex;
       align-items: center;
       justify-content: center;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--card);
+      color: var(--muted-2);
+      box-shadow: var(--shadow-sm);
       cursor: pointer;
-      line-height: 1;
-      transition: background-color 120ms ease, border-color 120ms ease, box-shadow 120ms ease, transform 120ms ease;
+      transition: background-color 150ms ease, border-color 150ms ease, color 150ms ease, transform 150ms ease, box-shadow 150ms ease;
     }
-    button.action:hover:not(:disabled) {
-      background: color-mix(in srgb, var(--vscode-list-hoverBackground) 78%, var(--vscode-button-secondaryBackground, var(--vscode-button-background)));
-      border-color: color-mix(in srgb, var(--vscode-focusBorder) 50%, transparent);
-      box-shadow: 0 0 0 1px color-mix(in srgb, var(--vscode-focusBorder) 18%, transparent);
+    .chrome-button:hover:not(:disabled),
+    .chrome-button:focus-visible:not(:disabled) {
+      border-color: #56606c;
+      background: var(--card-hover);
+      color: var(--text);
       transform: translateY(-1px);
+      box-shadow: var(--shadow-md);
+      outline: none;
     }
-    .action-icon {
-      width: 14px;
-      height: 14px;
+    .chrome-button:active:not(:disabled) {
+      transform: translateY(0);
+    }
+    .chrome-button:disabled {
+      cursor: default;
+      opacity: 0.55;
+    }
+    .action-icon,
+    .button-icon {
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      color: inherit;
-      opacity: 0.96;
       flex: 0 0 auto;
-      transition: transform 120ms ease, opacity 120ms ease;
     }
-    button.action:hover:not(:disabled) .action-icon,
-    .icon-button:hover:not(:disabled) .action-icon {
-      opacity: 1;
-      transform: scale(1.06);
-    }
+    .action-icon,
     .action-icon svg {
       width: 14px;
       height: 14px;
-      display: block;
     }
-    button.action.success .action-icon {
-      color: var(--vscode-testing-iconPassed);
+    .button-icon,
+    .button-icon svg {
+      width: 12px;
+      height: 12px;
     }
-    button.action.danger .action-icon {
-      color: var(--vscode-testing-iconFailed);
+    .rt-action {
+      display: inline-flex;
+      justify-content: flex-end;
     }
-    button.action:disabled {
-      cursor: default;
-      opacity: 0.6;
+    .rt-table th:nth-child(2),
+    .rt-table td:nth-child(2) {
+      width: 76px;
+      text-align: right;
     }
-    .key-toolbar {
-      display: flex;
-      gap: 8px;
-      padding: 12px 12px 12px;
+    .align-right {
+      text-align: right;
     }
-    .icon-button {
-      border: 1px solid var(--vscode-button-border, transparent);
-      background: var(--vscode-button-secondaryBackground, var(--vscode-button-background));
-      color: var(--vscode-button-secondaryForeground, var(--vscode-button-foreground));
-      border-radius: 6px;
-      width: 30px;
-      height: 30px;
-      padding: 0;
+    .rt-proxy-main {
+      min-width: 0;
       display: inline-flex;
       align-items: center;
-      justify-content: center;
-      cursor: pointer;
-      line-height: 1;
-      transition: background-color 120ms ease, border-color 120ms ease, box-shadow 120ms ease, transform 120ms ease;
+      gap: 7px;
+      max-width: 100%;
     }
-    .icon-button:hover:not(:disabled) {
-      background: color-mix(in srgb, var(--vscode-list-hoverBackground) 78%, var(--vscode-button-secondaryBackground, var(--vscode-button-background)));
-      border-color: color-mix(in srgb, var(--vscode-focusBorder) 50%, transparent);
-      box-shadow: 0 0 0 1px color-mix(in srgb, var(--vscode-focusBorder) 18%, transparent);
-      transform: translateY(-1px);
-    }
-    .icon-button.secondary {
-      background: var(--vscode-button-secondaryBackground, var(--vscode-dropdown-background));
-      color: var(--vscode-button-secondaryForeground, var(--vscode-dropdown-foreground));
-    }
-    .icon-button:disabled {
-      cursor: default;
-      opacity: 0.6;
-    }
-    .key-body {
-      padding: 0 12px 12px;
-    }
-    .table-header, .table-row {
-      width: 100%;
-      display: grid;
-      grid-template-columns: 36px minmax(124px, 180px) minmax(88px, 132px) minmax(96px, 148px);
-      gap: 8px;
-      align-items: center;
-      box-sizing: border-box;
-      padding: 8px 9px;
-    }
-    .table-header {
-      font-size: 10px;
-      font-weight: 600;
-      text-transform: uppercase;
-      letter-spacing: 0.06em;
-      color: var(--vscode-descriptionForeground);
-      border-bottom: 1px solid var(--vscode-panel-border);
-    }
-    .table-row {
-      border: 0;
-      border-top: 1px solid color-mix(in srgb, var(--vscode-panel-border) 70%, transparent);
-      background: transparent;
-      color: inherit;
-      text-align: left;
-      cursor: pointer;
-    }
-    .table-row:first-child { border-top: 0; }
-    .table-row:hover { background: color-mix(in srgb, var(--vscode-list-hoverBackground) 88%, transparent); }
-    .cell {
-      min-width: 0;
+    .rt-host-code,
+    .branch-code {
+      display: inline-block;
+      max-width: 100%;
       overflow: hidden;
       text-overflow: ellipsis;
+      vertical-align: middle;
       white-space: nowrap;
+      border: 1px solid var(--border);
+      border-radius: 7px;
+      background: var(--code-bg);
+      color: var(--text);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      font-size: 11px;
+      line-height: 1.35;
+      transition: border-color 150ms ease, color 150ms ease;
     }
-    .table-row .state {
+    .rt-host-code {
+      width: 20ch;
+      padding: 4px 7px;
+    }
+    .branch-code {
+      max-width: 14ch;
+      padding: 4px 7px;
+      color: var(--muted-2);
+    }
+    .rt-state-icon,
+    .rt-info-icon,
+    .project-state-icon {
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      font-size: 14px;
-      line-height: 1;
-    }
-    .table-header .state {
-      font-size: inherit;
-      line-height: inherit;
-      justify-content: flex-start;
-    }
-    .table-header .repo,
-    .table-header .branch,
-    .table-header .remote,
-    .table-row .repo,
-    .table-row .branch,
-    .table-row .remote {
-      justify-self: stretch;
-      width: 100%;
-      text-align: left;
-    }
-    .dot {
-      width: 8px;
-      height: 8px;
-      border-radius: 999px;
+      position: relative;
       flex: 0 0 auto;
     }
+    .rt-state-icon,
+    .rt-state-icon svg,
+    .project-state-icon,
+    .project-state-icon svg {
+      width: 16px;
+      height: 16px;
+    }
+    .rt-state-icon.connected {
+      color: var(--success);
+    }
+    .rt-state-icon.external {
+      color: var(--blue-400);
+    }
+    .rt-state-icon.starting {
+      color: var(--amber-400);
+      animation: spin 1s linear infinite;
+    }
+    .rt-state-icon.failed {
+      color: var(--danger-500);
+    }
+    .rt-state-icon.stopped {
+      color: var(--muted);
+    }
+    .state-pulse-wrap {
+      position: relative;
+      display: inline-flex;
+      width: 16px;
+      height: 16px;
+    }
+    .state-pulse-dot {
+      position: absolute;
+      top: -3px;
+      right: -3px;
+      width: 6px;
+      height: 6px;
+      border-radius: 999px;
+      background: currentColor;
+      animation: pulse 2s cubic-bezier(.4, 0, .6, 1) infinite;
+    }
+    .rt-info-icon {
+      width: 18px;
+      height: 18px;
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      background: var(--card-hover);
+      color: var(--muted);
+      cursor: help;
+      transition: background-color 150ms ease, color 150ms ease, border-color 150ms ease;
+    }
+    .rt-info-icon svg {
+      width: 12px;
+      height: 12px;
+    }
+    .rt-info-icon:hover,
+    .rt-info-icon:focus {
+      border-color: #5a626d;
+      background: #3a3f46;
+      color: var(--text);
+      outline: none;
+    }
+    .rt-action-button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 4px;
+      width: 58px;
+      min-height: 28px;
+      padding: 0 8px;
+      border: 0;
+      border-radius: 6px;
+      color: #ffffff;
+      box-shadow: var(--shadow-sm);
+      cursor: pointer;
+      font: inherit;
+      font-size: 11px;
+      font-weight: 500;
+      transition: background 200ms ease, transform 150ms ease, box-shadow 150ms ease, opacity 150ms ease;
+    }
+    .rt-action-button.start {
+      background: linear-gradient(90deg, var(--start-500), var(--start-600));
+    }
+    .rt-action-button.stop {
+      background: linear-gradient(90deg, var(--danger-500), var(--danger-600));
+    }
+    .rt-action-button.disabled {
+      border: 1px solid var(--border);
+      background: var(--card-hover);
+      color: var(--muted);
+      box-shadow: none;
+    }
+    .rt-action-button.start:hover:not(:disabled),
+    .rt-action-button.start:focus-visible:not(:disabled) {
+      background: linear-gradient(90deg, var(--start-400), var(--start-500));
+    }
+    .rt-action-button.stop:hover:not(:disabled),
+    .rt-action-button.stop:focus-visible:not(:disabled) {
+      background: linear-gradient(90deg, var(--danger-400), var(--danger-500));
+    }
+    .rt-action-button:hover:not(:disabled),
+    .rt-action-button:focus-visible:not(:disabled) {
+      transform: translateY(-1px);
+      box-shadow: var(--shadow-md);
+      outline: none;
+    }
+    .rt-action-button:disabled {
+      cursor: default;
+      opacity: 0.58;
+    }
+    .rt-tooltip {
+      position: fixed;
+      display: none;
+      z-index: 90;
+      width: min(320px, calc(100vw - 20px));
+      padding: 8px 10px;
+      border-radius: 7px;
+      border: 1px solid #59616c;
+      background: #1f2125;
+      color: #ffffff;
+      box-shadow: 0 12px 26px rgba(15, 23, 42, 0.24);
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      font-size: 11px;
+      line-height: 1.45;
+      text-align: left;
+      pointer-events: none;
+    }
+    .rt-tooltip.open {
+      display: block;
+    }
+    .table-scroll {
+      overflow-x: auto;
+    }
+    .dashboard-table {
+      width: 100%;
+      min-width: 430px;
+      border-collapse: collapse;
+      table-layout: auto;
+    }
+    .dashboard-table thead tr {
+      border-bottom: 1px solid var(--border);
+      background: var(--card-hover);
+    }
+    .dashboard-table th {
+      padding: 10px 12px;
+      color: var(--muted-2);
+      font-size: 10px;
+      line-height: 1.25;
+      font-weight: 600;
+      letter-spacing: 0.05em;
+      text-align: left;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+    .dashboard-table td {
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--border-soft);
+      vertical-align: middle;
+    }
+    .dashboard-table tbody tr:last-child td {
+      border-bottom: 0;
+    }
+    .dashboard-table tbody tr {
+      transition: background-color 150ms ease, color 150ms ease;
+    }
+    .dashboard-table tbody tr:hover {
+      background: var(--card-hover);
+    }
+    .key-table th:nth-child(1),
+    .key-table td:nth-child(1) {
+      width: 58px;
+    }
+    .key-table th:nth-child(2),
+    .key-table td:nth-child(2) {
+      min-width: 130px;
+    }
+    .project-row {
+      cursor: pointer;
+    }
+    .project-row:focus-visible {
+      outline: 2px solid var(--purple-500);
+      outline-offset: -2px;
+    }
+    .project-state-icon.synced {
+      color: var(--purple-500);
+    }
+    .project-state-placeholder,
+    .muted-placeholder {
+      display: inline-block;
+      width: 12px;
+      height: 1px;
+      background: transparent;
+    }
+    .project-state-icon.ahead {
+      width: auto;
+      height: auto;
+      padding: 4px 8px;
+      border: 1px solid rgba(59, 130, 246, 0.30);
+      border-radius: 999px;
+      background: rgba(59, 130, 246, 0.14);
+      color: var(--blue-400);
+    }
+    .project-state-icon.behind {
+      width: auto;
+      height: auto;
+      padding: 4px 8px;
+      border: 1px solid rgba(245, 158, 11, 0.30);
+      border-radius: 999px;
+      background: rgba(245, 158, 11, 0.14);
+      color: var(--amber-400);
+    }
+    .project-state-icon.diverged,
+    .project-state-icon.dirty,
+    .project-state-icon.unavailable {
+      width: auto;
+      height: auto;
+      padding: 4px 8px;
+      border: 1px solid rgba(255, 116, 116, 0.30);
+      border-radius: 999px;
+      background: rgba(255, 116, 116, 0.14);
+      color: var(--danger-400);
+    }
+    .project-state-icon.ahead svg,
+    .project-state-icon.behind svg,
+    .project-state-icon.diverged svg,
+    .project-state-icon.dirty svg,
+    .project-state-icon.unavailable svg {
+      width: 13px;
+      height: 13px;
+    }
+    .repo-name {
+      display: inline-block;
+      max-width: 100%;
+      overflow: hidden;
+      color: var(--text);
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      transition: color 150ms ease;
+    }
+    .project-row:hover .repo-name {
+      color: var(--text);
+    }
+    .project-row:hover .branch-code {
+      border-color: #59616c;
+      color: var(--text);
+    }
+    .remote-label {
+      display: inline-block;
+      max-width: 14ch;
+      overflow: hidden;
+      color: var(--muted);
+      text-overflow: ellipsis;
+      text-transform: capitalize;
+      white-space: nowrap;
+    }
+    .remote-label.synced {
+      color: var(--purple-600);
+    }
+    .remote-label.ahead {
+      color: var(--blue-500);
+    }
+    .remote-label.behind {
+      color: var(--amber-500);
+    }
+    .remote-label.diverged,
+    .remote-label.dirty,
+    .remote-label.unavailable {
+      color: var(--danger-500);
+    }
     .empty {
-      border: 1px dashed var(--vscode-panel-border);
-      border-radius: 8px;
-      padding: 12px;
-      color: var(--vscode-descriptionForeground);
+      margin: 8px;
+      border: 1px dashed var(--border);
+      border-radius: 7px;
+      padding: 10px;
+      color: var(--muted);
+      background: var(--card-hover);
       line-height: 1.45;
     }
     .detail-popover {
       position: fixed;
       display: none;
-      width: min(340px, calc(100vw - 24px));
-      max-height: min(240px, calc(100vh - 24px));
-      border: 1px solid var(--vscode-panel-border);
-      border-radius: 10px;
+      width: min(360px, calc(100vw - 20px));
+      max-height: min(260px, calc(100vh - 20px));
+      border: 1px solid var(--border);
+      border-radius: 8px;
       overflow: hidden;
-      background: var(--vscode-editor-background);
-      box-shadow: 0 8px 20px rgba(0, 0, 0, 0.18);
-      z-index: 30;
+      background: var(--card);
+      box-shadow: var(--shadow-md);
+      z-index: 70;
     }
     .detail-popover.open {
       display: grid;
@@ -589,63 +686,93 @@ export function renderToolBoxWebview(webview: vscode.Webview, model: any): strin
       display: flex;
       align-items: center;
       justify-content: space-between;
-      gap: 12px;
-      padding: 12px 14px;
-      border-bottom: 1px solid var(--vscode-panel-border);
+      gap: 8px;
+      padding: 9px 10px;
+      border-bottom: 1px solid var(--border);
+      background: var(--card-hover);
     }
     .detail-title {
-      font-size: 13px;
+      overflow: hidden;
+      color: var(--text);
+      font-size: 12px;
       font-weight: 600;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
     .detail-close {
-      border: 0;
-      background: transparent;
-      color: var(--vscode-foreground);
-      font-size: 18px;
-      line-height: 1;
-      padding: 4px 6px;
+      width: 24px;
+      height: 24px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--card);
+      color: var(--muted-2);
       cursor: pointer;
+    }
+    .detail-close svg {
+      width: 13px;
+      height: 13px;
+    }
+    .detail-close:hover,
+    .detail-close:focus-visible {
+      background: #3a3f46;
+      outline: none;
     }
     .detail-body {
       margin: 0;
-      padding: 14px;
+      padding: 10px;
       overflow: auto;
+      color: var(--text);
       white-space: pre-wrap;
       user-select: text;
       -webkit-user-select: text;
-      font-family: var(--vscode-editor-font-family, var(--vscode-font-family));
-      font-size: 12px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      font-size: 11px;
       line-height: 1.5;
+    }
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+    @keyframes pulse {
+      50% { opacity: 0.45; }
     }
   </style>
 </head>
 <body>
-  <div class="stack">
-    <section class="reverse-block">
-      <div class="eyebrow reverse-title">Reverse Tunnel</div>
-      <div class="panel reverse-panel">
-        <div class="reverse-toolbar">${reverseActions}</div>
-        ${reverseBody}
-      </div>
-    </section>
-    <section class="key-block">
-      <div class="eyebrow key-title">Pinned Projects</div>
-      <section class="panel key-panel">
-        <div class="key-toolbar">${keyToolbar}</div>
-        <div class="key-body">${keyBody}</div>
+  <main class="app-shell">
+    <header class="topbar">
+      <h1 class="app-title">My Dashboard</h1>
+      <div class="section-actions">${topActions}</div>
+    </header>
+    <div class="stack">
+      <section class="panel reverse-panel">
+        <div class="section-head">
+          <h2 class="section-title">Reverse Tunnel Proxies</h2>
+        </div>
+        <div class="card">${reverseBody}</div>
       </section>
-    </section>
-  </div>
+      <section class="panel key-panel">
+        <div class="section-head">
+          <h2 class="section-title">Pinned Projects</h2>
+          <div class="section-actions">${keyToolbar}</div>
+        </div>
+        <div class="card">${keyBody}</div>
+      </section>
+    </div>
+  </main>
+  <div id="rt-tooltip" class="rt-tooltip" aria-hidden="true"></div>
   <div id="detail-popover" class="detail-popover" aria-hidden="true">
     <div class="detail-head">
       <div id="detail-title" class="detail-title">Key Project Details</div>
-      <button id="detail-close" class="detail-close" type="button" aria-label="Close">\u00D7</button>
+      <button id="detail-close" class="detail-close" type="button" aria-label="Close">${iconSvg('x')}</button>
     </div>
     <pre id="detail-body" class="detail-body"></pre>
   </div>
   <script nonce="${nonce}">
     const vscode = acquireVsCodeApi();
-    document.querySelectorAll('button.action[data-action]').forEach((button) => {
+    document.querySelectorAll('button[data-action]').forEach((button) => {
       button.addEventListener('click', () => {
         const action = button.getAttribute('data-action');
         if (action) {
@@ -656,9 +783,6 @@ export function renderToolBoxWebview(webview: vscode.Webview, model: any): strin
     document.getElementById('refresh')?.addEventListener('click', () => {
       vscode.postMessage({ type: 'action', action: 'keyRefresh' });
     });
-    document.getElementById('key-settings')?.addEventListener('click', () => {
-      vscode.postMessage({ type: 'action', action: 'keySettings' });
-    });
     document.querySelectorAll('button[data-remote-action][data-remote-key]').forEach((button) => {
       button.addEventListener('click', () => {
         const action = button.getAttribute('data-remote-action');
@@ -668,6 +792,38 @@ export function renderToolBoxWebview(webview: vscode.Webview, model: any): strin
         }
       });
     });
+    const rtTooltip = document.getElementById('rt-tooltip');
+    const hideReverseTooltip = () => {
+      rtTooltip?.classList.remove('open');
+      rtTooltip?.setAttribute('aria-hidden', 'true');
+    };
+    const showReverseTooltip = (target) => {
+      if (!rtTooltip || !(target instanceof HTMLElement)) {
+        return;
+      }
+      const text = target.getAttribute('data-tooltip') || '';
+      if (!text) {
+        return;
+      }
+      rtTooltip.textContent = text;
+      rtTooltip.classList.add('open');
+      rtTooltip.setAttribute('aria-hidden', 'false');
+      const rect = target.getBoundingClientRect();
+      const margin = 10;
+      const tooltipRect = rtTooltip.getBoundingClientRect();
+      const left = Math.min(Math.max(rect.left, margin), window.innerWidth - tooltipRect.width - margin);
+      const top = Math.min(Math.max(rect.bottom + 6, margin), window.innerHeight - tooltipRect.height - margin);
+      rtTooltip.style.left = left + 'px';
+      rtTooltip.style.top = top + 'px';
+    };
+    document.querySelectorAll('.rt-info-icon').forEach((trigger) => {
+      trigger.addEventListener('mouseenter', () => showReverseTooltip(trigger));
+      trigger.addEventListener('focus', () => showReverseTooltip(trigger));
+      trigger.addEventListener('mouseleave', hideReverseTooltip);
+      trigger.addEventListener('blur', hideReverseTooltip);
+    });
+    window.addEventListener('scroll', hideReverseTooltip, true);
+    window.addEventListener('resize', hideReverseTooltip);
     const detailPopover = document.getElementById('detail-popover');
     const detailTitle = document.getElementById('detail-title');
     const detailBody = document.getElementById('detail-body');
@@ -682,13 +838,14 @@ export function renderToolBoxWebview(webview: vscode.Webview, model: any): strin
         return;
       }
       const target = event.target;
-      if (target instanceof HTMLElement && (target.closest('.table-row') || target.closest('#detail-popover'))) {
+      if (target instanceof HTMLElement && (target.closest('.project-row') || target.closest('#detail-popover'))) {
         return;
       }
       closeDetails();
     });
     window.addEventListener('keydown', (event) => {
       if (event.key === 'Escape') {
+        hideReverseTooltip();
         closeDetails();
       }
     });
@@ -697,9 +854,9 @@ export function renderToolBoxWebview(webview: vscode.Webview, model: any): strin
       if (message?.type !== 'detail' || !detailBody || !detailTitle || !detailPopover) {
         return;
       }
-      const margin = 12;
-      const width = Math.min(340, window.innerWidth - margin * 2);
-      const height = Math.min(240, window.innerHeight - margin * 2);
+      const margin = 10;
+      const width = Math.min(360, window.innerWidth - margin * 2);
+      const height = Math.min(260, window.innerHeight - margin * 2);
       const left = Math.min(Math.max(Number(message.left ?? margin), margin), window.innerWidth - width - margin);
       const top = Math.min(Math.max(Number(message.top ?? margin), margin), window.innerHeight - height - margin);
       detailTitle.textContent = message.title || 'Key Project Details';
@@ -709,16 +866,16 @@ export function renderToolBoxWebview(webview: vscode.Webview, model: any): strin
       detailPopover.classList.add('open');
       detailPopover.setAttribute('aria-hidden', 'false');
     });
-    document.querySelectorAll('.table-row').forEach((row) => {
-      row.addEventListener('click', (event) => {
+    document.querySelectorAll('.project-row').forEach((row) => {
+      const openDetail = (event) => {
         const repoName = row.getAttribute('data-repo');
         if (repoName && detailBody && detailTitle && detailPopover) {
-          const clientX = event instanceof MouseEvent ? event.clientX : 12;
-          const clientY = event instanceof MouseEvent ? event.clientY : 12;
+          const clientX = event instanceof MouseEvent ? event.clientX : 10;
+          const clientY = event instanceof MouseEvent ? event.clientY : 10;
           const detail = keyDetailsByRepo[repoName];
-          const margin = 12;
-          const width = Math.min(340, window.innerWidth - margin * 2);
-          const height = Math.min(240, window.innerHeight - margin * 2);
+          const margin = 10;
+          const width = Math.min(360, window.innerWidth - margin * 2);
+          const height = Math.min(260, window.innerHeight - margin * 2);
           const left = Math.min(Math.max(clientX + 8, margin), window.innerWidth - width - margin);
           const top = Math.min(Math.max(clientY + 8, margin), window.innerHeight - height - margin);
           detailTitle.textContent = detail?.title || 'Key Project Details';
@@ -728,10 +885,16 @@ export function renderToolBoxWebview(webview: vscode.Webview, model: any): strin
           detailPopover.classList.add('open');
           detailPopover.setAttribute('aria-hidden', 'false');
         }
+      };
+      row.addEventListener('click', openDetail);
+      row.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          openDetail(event);
+        }
       });
     });
   </script>
 </body>
 </html>`;
 }
-

@@ -57,7 +57,7 @@ suite('Pure Module Tests', () => {
   test('reverse tunnel config should reject duplicate remotes', () => {
     const { loadFileProxyConfig } = require('../reverseTunnel/config') as any;
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mytoolbox-config-test-'));
-    const configPath = path.join(dir, 'reverse-proxy.config.json');
+    const configPath = path.join(dir, 'mytoolbox.config.json');
 
     fs.writeFileSync(
       configPath,
@@ -79,6 +79,29 @@ suite('Pure Module Tests', () => {
     assert.throws(() => loadFileProxyConfig(configPath), /duplicate remote/);
   });
 
+  test('reverse tunnel config should allow empty remotes', () => {
+    const { loadFileProxyConfig } = require('../reverseTunnel/config') as any;
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mytoolbox-config-test-'));
+    const configPath = path.join(dir, 'mytoolbox.config.json');
+
+    fs.writeFileSync(
+      configPath,
+      JSON.stringify({
+        ReverseTunnel: {
+          sshPath: 'ssh',
+          connectionReadyDelayMs: 1200,
+          localHost: '127.0.0.1',
+          localPort: 7897,
+          remotes: []
+        }
+      }),
+      'utf8'
+    );
+
+    const parsed = loadFileProxyConfig(configPath);
+    assert.deepStrictEqual(parsed.remotes, []);
+  });
+
   test('reverse tunnel path resolution should prefer workspace in local mode', () => {
     const { resolveConfiguredConfigPathWithContext, resolveConfigPathWithContext } = require('../reverseTunnel/config') as any;
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mytoolbox-path-test-'));
@@ -86,7 +109,10 @@ suite('Pure Module Tests', () => {
     const workspacePath = path.join(dir, 'workspace');
     fs.mkdirSync(path.join(extensionPath, 'resources'), { recursive: true });
     fs.mkdirSync(workspacePath, { recursive: true });
-    fs.writeFileSync(path.join(workspacePath, 'reverse-proxy.config.json'), '{}', 'utf8');
+    const relativeConfigName = '.vscode/mytoolbox.config.json';
+    const workspaceConfigPath = path.join(workspacePath, relativeConfigName);
+    fs.mkdirSync(path.dirname(workspaceConfigPath), { recursive: true });
+    fs.writeFileSync(workspaceConfigPath, '{}', 'utf8');
 
     const options = {
       workspaceFolder: workspacePath,
@@ -95,7 +121,7 @@ suite('Pure Module Tests', () => {
       extensionPath
     };
 
-    assert.strictEqual(resolveConfiguredConfigPathWithContext('reverse-proxy.config.json', options), path.join(workspacePath, 'reverse-proxy.config.json'));
-    assert.strictEqual(resolveConfigPathWithContext('reverse-proxy.config.json', options), path.join(workspacePath, 'reverse-proxy.config.json'));
+    assert.strictEqual(resolveConfiguredConfigPathWithContext(relativeConfigName, options), workspaceConfigPath);
+    assert.strictEqual(resolveConfigPathWithContext(relativeConfigName, options), workspaceConfigPath);
   });
 });

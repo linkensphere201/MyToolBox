@@ -40,6 +40,10 @@ let keyProjectsRefreshPromise: Promise<void> | null = null;
 const remoteTunnelStates = new Map<string, RemoteTunnelRuntimeState>();
 const LOCAL_TARGET_CONNECT_FAILURE_LOG_INTERVAL_MS = 30_000;
 const LOCAL_TARGET_CONNECT_FAILURE_CONTEXT_MS = 30_000;
+const TOOLBOX_CONFIGURATION_SECTION = 'myToolbox';
+const TOOLBOX_CONFIG_FILE_SETTING = 'configFile';
+const DEFAULT_TOOLBOX_CONFIG_FILE = '.vscode/mytoolbox.config.json';
+const DEFAULT_CREATED_TOOLBOX_CONFIG_FILE = path.join('.vscode', 'mytoolbox.config.json');
 
 type ProxyState = 'stopped' | 'starting' | 'connected' | 'external' | 'failed';
 
@@ -150,6 +154,7 @@ type KeyProjectsViewRow = {
   detailText: string;
   clean: boolean;
   available: boolean;
+  loaded: boolean;
 };
 
 type KeyProjectsViewModel = {
@@ -160,9 +165,29 @@ type KeyProjectsViewModel = {
 };
 
 type ToolBoxAction = {
-  id: 'logs' | 'proxySettings' | 'keyRefresh' | 'keySettings';
+  id: 'bootstrap' | 'logs' | 'proxySettings' | 'keyRefresh';
   label: string;
   enabled: boolean;
+};
+
+type BootstrapKeyProjectsConfig = {
+  mode: KeyProjectsMode;
+  rootDir: string;
+  repoNames: string[];
+  sshTarget: string;
+  sshPort: number;
+  gitPath: string;
+  sshPath: string;
+};
+
+type BootstrapToolBoxConfig = {
+  ReverseTunnel: FileProxyConfig;
+  keyProjects: BootstrapKeyProjectsConfig;
+};
+
+type ToolBoxConfigPathInfo = {
+  configPath: string;
+  hasConfiguredPath: boolean;
 };
 
 type ReverseTunnelViewRow = {
@@ -280,6 +305,11 @@ function getReverseTunnelTone(state: ProxyState): ReverseTunnelViewRow['tone'] {
 
 function getReverseTunnelActions(): ToolBoxAction[] {
   return [
+    {
+      id: 'bootstrap',
+      label: 'Bootstrap',
+      enabled: true
+    },
     {
       id: 'logs',
       label: 'Logs',
@@ -429,15 +459,23 @@ function getKeyProjectStateEmoji(status: Pick<KeyProjectStatus, 'clean' | 'avail
 }
 
 async function getKeyProjectsViewModel(): Promise<KeyProjectsViewModel> {
-  const config = await getKeyProjectsConfig();
+  let config: KeyProjectsConfig;
+  try {
+    config = await getKeyProjectsConfig();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return {
+      issue: message,
+      configLoaded: false,
+      refreshing: Boolean(keyProjectsRefreshPromise),
+      rows: []
+    };
+  }
   const issue = getKeyProjectsConfigurationIssue(config);
   const cached = issue ? null : getCachedKeyProjectStatuses(config);
-
-  return {
-    issue,
-    configLoaded: Boolean(cached),
-    refreshing: Boolean(keyProjectsRefreshPromise),
-    rows: (cached ?? []).map((status) => ({
+  const statuses = cached ?? [];
+  const rows = statuses.length > 0
+    ? statuses.map((status) => ({
       configuredRepoName: status.configuredRepoName,
       repoName: status.repoName,
       branch: status.available ? status.branch : 'unavailable',
@@ -447,8 +485,30 @@ async function getKeyProjectsViewModel(): Promise<KeyProjectsViewModel> {
       detailTitle: status.repoName + ' - ' + status.branch,
       detailText: formatKeyProjectCachedDetail(status),
       clean: status.clean,
-      available: status.available
+      available: status.available,
+      loaded: true
     }))
+    : issue
+      ? []
+      : config.repoNames.map((repoName) => ({
+        configuredRepoName: repoName,
+        repoName,
+        branch: '',
+        remoteLabel: '',
+        stateLabel: 'not loaded',
+        stateEmoji: '',
+        detailTitle: repoName,
+        detailText: 'Status not loaded. Click Refresh first.',
+        clean: false,
+        available: true,
+        loaded: false
+      }));
+
+  return {
+    issue,
+    configLoaded: Boolean(cached),
+    refreshing: Boolean(keyProjectsRefreshPromise),
+    rows
   };
 }
 
@@ -594,8 +654,26 @@ function getReverseTunnelSidebarItemsForTest(): SidebarTestItem[] {
 }
 
 async function getKeyProjectSidebarItemsForTest(): Promise<SidebarTestItem[]> {
-  const config = await getKeyProjectsConfig();
-  const issue = getKeyProjectsConfigurationIssue(config);
+  let config: KeyProjectsConfig;
+  let issue: string | null = null;
+  try {
+    config = await getKeyProjectsConfig();
+    issue = getKeyProjectsConfigurationIssue(config);
+  } catch (error) {
+    issue = error instanceof Error ? error.message : String(error);
+    config = {
+      mode: 'local',
+      rootDir: '',
+      repoNames: [],
+      sshTarget: '',
+      sshPort: 22,
+      gitPath: 'git',
+      sshPath: 'ssh',
+      loadedConfigPath: '<invalid>',
+      configExists: false,
+      workspaceAvailable: true
+    };
+  }
   const items: SidebarTestItem[] = [];
 
   if (issue) {
@@ -626,13 +704,17 @@ async function getKeyProjectSidebarItemsForTest(): Promise<SidebarTestItem[]> {
         });
       }
     } else {
-      items.push({
-        kind: 'info',
-        label: 'Click Refresh to load key project status.',
-        tooltip: 'Click Refresh to load key project status.',
-        enabled: false,
-        parentLabel: 'Pinned Projects'
-      });
+      for (const repoName of config.repoNames) {
+        items.push({
+          kind: 'project',
+          label: repoName,
+          tooltip: 'Status not loaded. Click Refresh first.',
+          command: 'reverseProxy.showKeyProjectStatus',
+          arguments: [repoName],
+          enabled: true,
+          parentLabel: 'Pinned Projects'
+        });
+      }
     }
   }
 
@@ -643,14 +725,6 @@ async function getKeyProjectSidebarItemsForTest(): Promise<SidebarTestItem[]> {
     enabled: !keyProjectsRefreshPromise,
     parentLabel: 'Pinned Projects'
   });
-  items.push({
-    kind: 'action',
-    label: 'Settings',
-    command: 'reverseProxy.openKeyProjectSettings',
-    enabled: true,
-    parentLabel: 'Pinned Projects'
-  });
-
   return items;
 }
 
@@ -678,7 +752,17 @@ async function updateKeyStatusBar(): Promise<void> {
     return;
   }
 
-  const config = await getKeyProjectsConfig();
+  let config: KeyProjectsConfig;
+  try {
+    config = await getKeyProjectsConfig();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    keyStatusBarItem.text = '$(bookmark) setup';
+    keyStatusBarItem.tooltip = message;
+    keyStatusBarItem.command = 'reverseProxy.openKeyProjectSettings';
+    keyStatusBarItem.show();
+    return;
+  }
   const issue = getKeyProjectsConfigurationIssue(config);
   if (issue) {
     keyStatusBarItem.text = '$(bookmark) setup';
@@ -708,39 +792,6 @@ async function setKeyProjectsWorkspaceOverrideForTest(workspacePath?: string | n
   return keyProjectsWorkspaceOverride;
 }
 
-function getWorkspaceFolderUri(workspacePath?: string): vscode.Uri | null {
-  const overridePath = workspacePath ?? keyProjectsWorkspaceOverride;
-  if (overridePath) {
-    return vscode.Uri.file(overridePath);
-  }
-
-  return vscode.workspace.workspaceFolders?.[0]?.uri ?? null;
-}
-
-function getKeyProjectsConfigUri(workspacePath?: string): vscode.Uri | null {
-  const workspaceUri = getWorkspaceFolderUri(workspacePath);
-  return workspaceUri ? vscode.Uri.joinPath(workspaceUri, '.vscode', 'mytoolbox.json') : null;
-}
-
-function getDefaultKeyProjectsConfigContent(): string {
-  return `${JSON.stringify(
-    {
-      keyProjects: {
-        mode: 'local',
-        rootDir: '',
-        repoNames: [],
-        sshTarget: '',
-        sshPort: 22,
-        gitPath: 'git',
-        sshPath: 'ssh'
-      }
-    },
-    null,
-    2
-  )}
-`;
-}
-
 function isFileNotFoundError(error: unknown): boolean {
   if (error instanceof vscode.FileSystemError) {
     const details = `${error.name} ${error.message}`;
@@ -752,24 +803,11 @@ function isFileNotFoundError(error: unknown): boolean {
 }
 
 async function getKeyProjectsConfig(workspacePath?: string): Promise<KeyProjectsConfig> {
-  const configUri = getKeyProjectsConfigUri(workspacePath);
-  if (!configUri) {
-    const result = {
-      mode: 'local' as KeyProjectsMode,
-      rootDir: '',
-      repoNames: [],
-      sshTarget: '',
-      sshPort: 22,
-      gitPath: 'git',
-      sshPath: 'ssh',
-      loadedConfigPath: '<no-workspace>',
-      configExists: false,
-      workspaceAvailable: false
-    };
-
-    outputChannel?.appendLine('[key-projects] config path=<no-workspace> exists=false mode=local rootDir=<empty> repos=<none> sshTarget=<empty> sshPort=22');
-    return result;
-  }
+  void workspacePath;
+  const toolBoxConfig = vscode.workspace.getConfiguration(TOOLBOX_CONFIGURATION_SECTION);
+  const configuredPath = toolBoxConfig.get<string>(TOOLBOX_CONFIG_FILE_SETTING, DEFAULT_TOOLBOX_CONFIG_FILE);
+  const configPath = resolveConfiguredConfigPath(configuredPath);
+  const configUri = vscode.Uri.file(configPath);
 
   let parsed: Record<string, unknown> | null = null;
 
@@ -802,7 +840,7 @@ async function getKeyProjectsConfig(workspacePath?: string): Promise<KeyProjects
     sshPort: typeof section.sshPort === 'number' && Number.isFinite(section.sshPort) ? Math.max(1, section.sshPort) : 22,
     gitPath: typeof section.gitPath === 'string' && section.gitPath.trim() ? section.gitPath.trim() : 'git',
     sshPath: typeof section.sshPath === 'string' && section.sshPath.trim() ? section.sshPath.trim() : 'ssh',
-    loadedConfigPath: configUri.toString(),
+    loadedConfigPath: configPath,
     configExists: Boolean(parsed),
     workspaceAvailable: true
   };
@@ -815,61 +853,28 @@ async function getKeyProjectsConfig(workspacePath?: string): Promise<KeyProjects
 }
 
 function getKeyProjectsConfigurationIssue(config: KeyProjectsConfig): string | null {
-  if (!config.workspaceAvailable) {
-    return 'Open a workspace folder to use key projects.';
-  }
-
   if (!config.configExists) {
-    return 'Create .vscode/mytoolbox.json to list key projects.';
+    return 'Create the ToolBox config file to list key projects.';
   }
 
   if (!config.rootDir) {
-    return 'Set keyProjects.rootDir in .vscode/mytoolbox.json.';
-  }
-
-  if (config.repoNames.length === 0) {
-    return 'Set keyProjects.repoNames in .vscode/mytoolbox.json.';
+    return 'Set keyProjects.rootDir in the ToolBox config file.';
   }
 
   if (config.mode === 'ssh' && !config.sshTarget) {
-    return 'Set keyProjects.sshTarget in .vscode/mytoolbox.json when mode is ssh.';
+    return 'Set keyProjects.sshTarget in the ToolBox config file when mode is ssh.';
   }
 
   return null;
 }
 
 async function openKeyProjectsSettings(workspacePath?: string): Promise<string> {
-  const workspaceUri = getWorkspaceFolderUri(workspacePath);
-  if (!workspaceUri) {
-    throw new Error('Open a workspace folder before editing key project settings.');
+  void workspacePath;
+  const openedPath = await openSettingsConfig();
+  if (!openedPath) {
+    throw new Error('ToolBox config file was not opened.');
   }
-
-  const configUri = vscode.Uri.joinPath(workspaceUri, '.vscode', 'mytoolbox.json');
-  const configDir = vscode.Uri.joinPath(workspaceUri, '.vscode');
-
-  outputChannel?.appendLine(`[key-projects] opening settings file ${configUri.toString()}`);
-
-  try {
-    await vscode.workspace.fs.stat(configDir);
-  } catch (error) {
-    if (!isFileNotFoundError(error)) {
-      throw error;
-    }
-    await vscode.workspace.fs.createDirectory(configDir);
-  }
-
-  try {
-    await vscode.workspace.fs.stat(configUri);
-  } catch (error) {
-    if (!isFileNotFoundError(error)) {
-      throw error;
-    }
-    await vscode.workspace.fs.writeFile(configUri, Buffer.from(getDefaultKeyProjectsConfigContent(), 'utf8'));
-  }
-
-  const doc = await vscode.workspace.openTextDocument(configUri);
-  await vscode.window.showTextDocument(doc, { preview: false });
-  return configUri.scheme === 'file' ? configUri.fsPath : configUri.toString();
+  return openedPath;
 }
 
 function getRepoPath(rootDir: string, repoName: string, mode: KeyProjectsMode): string {
@@ -1348,8 +1353,8 @@ function resolveConfiguredConfigPath(configFile: string): string {
 
 
 function getConfig(): RuntimeProxyConfig {
-  const config = vscode.workspace.getConfiguration('reverseProxy');
-  const configFile = config.get<string>('configFile', 'reverse-proxy.config.json');
+  const config = vscode.workspace.getConfiguration(TOOLBOX_CONFIGURATION_SECTION);
+  const configFile = config.get<string>(TOOLBOX_CONFIG_FILE_SETTING, DEFAULT_TOOLBOX_CONFIG_FILE);
   const configPath = resolveConfigPath(configFile);
   return getRuntimeProxyConfig(configPath);
 }
@@ -1637,7 +1642,7 @@ async function startRemoteTunnel(remoteKey: string): Promise<void> {
     state.lastError = message;
     setRemoteTunnelState(remote.key, 'failed');
     vscode.window.showErrorMessage(
-      `SSH command is unavailable. Install OpenSSH or update 'sshPath' in reverse-proxy.config.json. Details: ${message}`
+      `SSH command is unavailable. Install OpenSSH or update 'sshPath' in the ToolBox config file. Details: ${message}`
     );
     return;
   }
@@ -1823,53 +1828,325 @@ function disposeReverseTunnelState(): void {
   remoteTunnelStates.clear();
 }
 
+function getToolBoxConfigPathInfo(): ToolBoxConfigPathInfo {
+  const toolBoxConfig = vscode.workspace.getConfiguration(TOOLBOX_CONFIGURATION_SECTION);
+  const inspected = toolBoxConfig.inspect<string>(TOOLBOX_CONFIG_FILE_SETTING);
+  const hasConfiguredPath = inspected?.globalValue !== undefined
+    || inspected?.workspaceValue !== undefined
+    || inspected?.workspaceFolderValue !== undefined
+    || inspected?.defaultLanguageValue !== undefined
+    || inspected?.globalLanguageValue !== undefined
+    || inspected?.workspaceLanguageValue !== undefined
+    || inspected?.workspaceFolderLanguageValue !== undefined;
+  const configuredPath = toolBoxConfig.get<string>(TOOLBOX_CONFIG_FILE_SETTING, DEFAULT_TOOLBOX_CONFIG_FILE);
 
-async function openSettingsConfig(): Promise<void> {
-  const reverseProxyConfig = vscode.workspace.getConfiguration('reverseProxy');
-  const configuredPath = reverseProxyConfig.get<string>('configFile', 'reverse-proxy.config.json');
-  const currentPath = resolveConfiguredConfigPath(configuredPath);
+  return {
+    configPath: resolveConfiguredConfigPath(configuredPath),
+    hasConfiguredPath
+  };
+}
 
-  let finalConfigPath = currentPath;
+async function writeToolBoxConfigFile(configPath: string, config: BootstrapToolBoxConfig | unknown): Promise<void> {
+  await vscode.workspace.fs.createDirectory(vscode.Uri.file(path.dirname(configPath)));
+  await vscode.workspace.fs.writeFile(
+    vscode.Uri.file(configPath),
+    Buffer.from(JSON.stringify(config, null, 2) + '\n', 'utf8')
+  );
+}
 
-  if (!fs.existsSync(currentPath)) {
-    const defaultUri =
-      !vscode.env.remoteName && vscode.workspace.workspaceFolders?.[0]?.uri
-        ? vscode.workspace.workspaceFolders[0].uri
-        : vscode.Uri.file(os.homedir());
+async function updateToolBoxConfigFileSetting(configPath: string): Promise<void> {
+  await vscode.workspace
+    .getConfiguration(TOOLBOX_CONFIGURATION_SECTION)
+    .update(TOOLBOX_CONFIG_FILE_SETTING, configPath, vscode.ConfigurationTarget.Global);
+}
 
-    const selected = await vscode.window.showOpenDialog({
-      canSelectFiles: false,
-      canSelectFolders: true,
-      canSelectMany: false,
-      openLabel: 'Select',
-      defaultUri
-    });
+async function openToolBoxConfigFile(configPath: string): Promise<string> {
+  const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(configPath));
+  await vscode.window.showTextDocument(doc, { preview: false });
+  return configPath;
+}
 
-    if (!selected || selected.length === 0) {
-      return;
-    }
+function parsePortInput(value: string, fieldName: string): number {
+  const port = Number(value.trim());
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new Error(`${fieldName} must be an integer from 1 to 65535.`);
+  }
+  return port;
+}
 
-    const selectedDir = selected[0].fsPath;
-    finalConfigPath = path.join(selectedDir, 'configs.json');
-
-    if (!fs.existsSync(finalConfigPath)) {
-      await vscode.workspace.fs.writeFile(
-        vscode.Uri.file(finalConfigPath),
-        Buffer.from(getDefaultConfigJsonContent(), 'utf8')
-      );
-    }
-
-    await reverseProxyConfig.update('configFile', finalConfigPath, vscode.ConfigurationTarget.Global);
-    void vscode.window.showInformationMessage(`Config file created: ${finalConfigPath}`);
+function parseLocalTargetInput(value: string): { localHost: string; localPort: number } {
+  const trimmed = value.trim();
+  const separatorIndex = trimmed.lastIndexOf(':');
+  if (separatorIndex <= 0 || separatorIndex === trimmed.length - 1) {
+    throw new Error('Enter local target as localHost:localPort.');
   }
 
-  const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(finalConfigPath));
-  await vscode.window.showTextDocument(doc, { preview: false });
+  const localHost = trimmed.slice(0, separatorIndex).trim();
+  if (!localHost) {
+    throw new Error('localHost is required.');
+  }
+
+  return {
+    localHost,
+    localPort: parsePortInput(trimmed.slice(separatorIndex + 1), 'localPort')
+  };
+}
+
+function validateLocalTargetInput(value: string): string | undefined {
+  try {
+    parseLocalTargetInput(value);
+    return undefined;
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error);
+  }
+}
+
+function validatePortInput(fieldName: string): (value: string) => string | undefined {
+  return (value: string): string | undefined => {
+    try {
+      parsePortInput(value, fieldName);
+      return undefined;
+    } catch (error) {
+      return error instanceof Error ? error.message : String(error);
+    }
+  };
+}
+
+function validateRequiredInput(fieldName: string): (value: string) => string | undefined {
+  return (value: string): string | undefined => value.trim() ? undefined : `${fieldName} is required.`;
+}
+
+async function promptRequiredInput(options: vscode.InputBoxOptions & { fieldName: string }): Promise<string | undefined> {
+  const value = await vscode.window.showInputBox({
+    ...options,
+    validateInput: options.validateInput ?? validateRequiredInput(options.fieldName)
+  });
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : undefined;
+}
+
+async function promptPort(fieldName: string, value: string): Promise<number | undefined> {
+  const input = await vscode.window.showInputBox({
+    prompt: fieldName,
+    value,
+    validateInput: validatePortInput(fieldName)
+  });
+  return input === undefined ? undefined : parsePortInput(input, fieldName);
+}
+
+async function promptLocalRootDir(): Promise<string | undefined> {
+  const selected = await vscode.window.showOpenDialog({
+    canSelectFiles: false,
+    canSelectFolders: true,
+    canSelectMany: false,
+    openLabel: 'Select rootDir'
+  });
+
+  const first = selected?.[0];
+  return first ? first.fsPath : undefined;
+}
+
+async function runBootstrapWizard(): Promise<BootstrapToolBoxConfig | undefined> {
+  const localTargetInput = await vscode.window.showInputBox({
+    prompt: 'Reverse proxy local target (localHost:localPort)',
+    value: '127.0.0.1:7897',
+    validateInput: validateLocalTargetInput
+  });
+  if (localTargetInput === undefined) {
+    return undefined;
+  }
+
+  const localTarget = parseLocalTargetInput(localTargetInput);
+  const remotes: RemoteProxyConfig[] = [];
+  while (true) {
+    const action = await vscode.window.showQuickPick(
+      ['Add remote', 'Finish remotes'],
+      { placeHolder: remotes.length === 0 ? 'Add a reverse proxy remote or finish with none.' : 'Add another remote or finish.' }
+    );
+    if (!action) {
+      return undefined;
+    }
+    if (action === 'Finish remotes') {
+      break;
+    }
+
+    const remoteHost = await promptRequiredInput({
+      fieldName: 'remoteHost',
+      prompt: 'Remote host address'
+    });
+    if (remoteHost === undefined) {
+      return undefined;
+    }
+
+    const remotePort = await promptPort('remotePort', '4001');
+    if (remotePort === undefined) {
+      return undefined;
+    }
+
+    const remoteUser = await promptRequiredInput({
+      fieldName: 'remoteUser',
+      prompt: 'Remote SSH username'
+    });
+    if (remoteUser === undefined) {
+      return undefined;
+    }
+
+    const remoteBindPort = await promptPort('remoteBindPort', '17897');
+    if (remoteBindPort === undefined) {
+      return undefined;
+    }
+
+    remotes.push({
+      remoteHost,
+      remotePort,
+      remoteUser,
+      remoteBindPort,
+      identityFile: ''
+    });
+  }
+
+  const selectedMode = await vscode.window.showQuickPick(['local', 'ssh'], {
+    placeHolder: 'Pinned Projects mode'
+  });
+  if (!selectedMode) {
+    return undefined;
+  }
+  const mode = selectedMode as KeyProjectsMode;
+
+  let sshTarget = '';
+  let sshPort = 22;
+  if (mode === 'ssh') {
+    const target = await promptRequiredInput({
+      fieldName: 'sshTarget',
+      prompt: 'Pinned Projects SSH target, for example user@example.com'
+    });
+    if (target === undefined) {
+      return undefined;
+    }
+    sshTarget = target;
+
+    const port = await promptPort('sshPort', '22');
+    if (port === undefined) {
+      return undefined;
+    }
+    sshPort = port;
+  }
+
+  const rootDir = mode === 'local'
+    ? await promptLocalRootDir()
+    : await promptRequiredInput({
+      fieldName: 'rootDir',
+      prompt: 'Pinned Projects rootDir'
+    });
+  if (rootDir === undefined) {
+    return undefined;
+  }
+
+  const repoNames: string[] = [];
+  while (true) {
+    const action = await vscode.window.showQuickPick(
+      ['Add repo', 'Finish repos'],
+      { placeHolder: repoNames.length === 0 ? 'Add a repo name or finish with none.' : 'Add another repo or finish.' }
+    );
+    if (!action) {
+      return undefined;
+    }
+    if (action === 'Finish repos') {
+      break;
+    }
+
+    const repoName = await promptRequiredInput({
+      fieldName: 'repoName',
+      prompt: 'Repository name under rootDir. Use . for rootDir itself.'
+    });
+    if (repoName === undefined) {
+      return undefined;
+    }
+    repoNames.push(repoName);
+  }
+
+  return {
+    ReverseTunnel: {
+      sshPath: 'ssh',
+      connectionReadyDelayMs: 1200,
+      localHost: localTarget.localHost,
+      localPort: localTarget.localPort,
+      remotes
+    },
+    keyProjects: {
+      mode,
+      rootDir,
+      repoNames,
+      sshTarget,
+      sshPort,
+      gitPath: 'git',
+      sshPath: 'ssh'
+    }
+  };
+}
+
+async function refreshToolBoxAfterConfigChange(): Promise<void> {
+  invalidateKeyProjectsCache('config file changed');
+  void reverseTunnelService?.syncStateFromSystem();
+  reverseTunnelService?.updateStatusBar();
+  void toolBoxWebviewProvider?.refresh();
+  await pinnedProjectsService?.updateStatusBar();
+}
+
+async function bootstrapConfig(): Promise<string | undefined> {
+  const { configPath } = getToolBoxConfigPathInfo();
+
+  if (fs.existsSync(configPath)) {
+    const confirmation = await vscode.window.showWarningMessage(
+      'Overwrite existing ToolBox config?',
+      { modal: true },
+      'Overwrite'
+    );
+    if (confirmation !== 'Overwrite') {
+      return undefined;
+    }
+  }
+
+  const config = await runBootstrapWizard();
+  if (!config) {
+    return undefined;
+  }
+
+  await writeToolBoxConfigFile(configPath, config);
+  await updateToolBoxConfigFileSetting(configPath);
+  await refreshToolBoxAfterConfigChange();
+  void vscode.window.showInformationMessage(`ToolBox config file created: ${configPath}`);
+  return openToolBoxConfigFile(configPath);
+}
+
+async function openSettingsConfig(): Promise<string | undefined> {
+  const { configPath, hasConfiguredPath } = getToolBoxConfigPathInfo();
+
+  if (!fs.existsSync(configPath)) {
+    const action = await vscode.window.showQuickPick(['Create default config', 'Run bootstrap wizard'], {
+      placeHolder: 'ToolBox config does not exist.'
+    });
+    if (!action) {
+      return undefined;
+    }
+    if (action === 'Run bootstrap wizard') {
+      return bootstrapConfig();
+    }
+
+    await writeToolBoxConfigFile(configPath, JSON.parse(getDefaultConfigJsonContent()));
+    await updateToolBoxConfigFileSetting(configPath);
+    await refreshToolBoxAfterConfigChange();
+    void vscode.window.showInformationMessage(`ToolBox config file created: ${configPath}`);
+  } else if (!hasConfiguredPath) {
+    await updateToolBoxConfigFileSetting(configPath);
+  }
+
+  return openToolBoxConfigFile(configPath);
 }
 
 export function activate(context: vscode.ExtensionContext): void {
   extensionContextRef = context;
-  outputChannel = createTimestampedOutputChannel(vscode.window.createOutputChannel('Reverse Proxy'));
+  outputChannel = createTimestampedOutputChannel(vscode.window.createOutputChannel('CodeOps Panel'));
   keyStatusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 150);
   keyStatusBarItem.command = 'reverseProxy.refreshKeyProjects';
   keyStatusBarItem.text = '$(bookmark) not loaded';
@@ -1907,9 +2184,13 @@ export function activate(context: vscode.ExtensionContext): void {
     render: renderToolBoxWebview,
     getPinnedProjectDetail: getPinnedProjectDetailForWebview,
     showLogs,
-    openProxySettings: openSettingsConfig,
+    openProxySettings: async () => {
+      await openSettingsConfig();
+    },
+    bootstrapConfig: async () => {
+      await bootstrapConfig();
+    },
     refreshPinnedProjects: () => pinnedProjectsService?.refresh() ?? refreshKeyProjects(),
-    openPinnedProjectSettings: () => pinnedProjectsService?.openSettings() ?? openKeyProjectsSettings(),
     startReverseTunnel: (remoteKey) => reverseTunnelService?.start(remoteKey) ?? startRemoteTunnel(remoteKey),
     stopReverseTunnel: (remoteKey) => (reverseTunnelService ?? { stop: stopRemoteTunnel }).stop(remoteKey)
   });
@@ -1921,29 +2202,6 @@ export function activate(context: vscode.ExtensionContext): void {
   void reverseTunnelService.syncStateFromSystem();
   void pinnedProjectsService.updateStatusBar();
 
-  const keyProjectsWatchers = (vscode.workspace.workspaceFolders ?? []).map((folder) => {
-    const watcher = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(folder, '.vscode/mytoolbox.json'));
-    watcher.onDidChange(() => {
-      invalidateKeyProjectsCache('config file changed');
-      void toolBoxWebviewProvider?.refresh();
-    
-      void pinnedProjectsService?.updateStatusBar();
-    });
-    watcher.onDidCreate(() => {
-      invalidateKeyProjectsCache('config file created');
-      void toolBoxWebviewProvider?.refresh();
-    
-      void pinnedProjectsService?.updateStatusBar();
-    });
-    watcher.onDidDelete(() => {
-      invalidateKeyProjectsCache('config file deleted');
-      void toolBoxWebviewProvider?.refresh();
-    
-      void pinnedProjectsService?.updateStatusBar();
-    });
-    return watcher;
-  });
-
   const toolBoxWebviewRegistration = vscode.window.registerWebviewViewProvider(ToolBoxWebviewProvider.viewType, toolBoxWebviewProvider);
 
   context.subscriptions.push(
@@ -1951,13 +2209,13 @@ export function activate(context: vscode.ExtensionContext): void {
     keyStatusBarItem,
     statusBarItem,
     toolBoxWebviewRegistration,
-    ...keyProjectsWatchers,
     vscode.workspace.onDidChangeConfiguration((event) => {
-      if (event.affectsConfiguration('reverseProxy.configFile')) {
+      if (event.affectsConfiguration(`${TOOLBOX_CONFIGURATION_SECTION}.${TOOLBOX_CONFIG_FILE_SETTING}`)) {
+        invalidateKeyProjectsCache('config file setting changed');
         void reverseTunnelService?.syncStateFromSystem();
         reverseTunnelService?.updateStatusBar();
       }
-      if (event.affectsConfiguration('reverseProxy')) {
+      if (event.affectsConfiguration(TOOLBOX_CONFIGURATION_SECTION)) {
         void toolBoxWebviewProvider?.refresh();
         reverseTunnelService?.updateStatusBar();
       }
@@ -1980,6 +2238,12 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     vscode.commands.registerCommand('reverseProxy.openSettings', async () => {
       await openSettingsConfig();
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('reverseProxy.bootstrapConfig', async () => {
+      return bootstrapConfig();
     })
   );
 
@@ -2119,24 +2383,10 @@ export function activate(context: vscode.ExtensionContext): void {
   );
   context.subscriptions.push(
     vscode.commands.registerCommand('reverseProxy.test.openSettingsWithDirectory', async (dir: string) => {
-      const reverseProxyConfig = vscode.workspace.getConfiguration('reverseProxy');
-      const configuredPath = reverseProxyConfig.get<string>('configFile', 'reverse-proxy.config.json');
-      const currentPath = resolveConfiguredConfigPath(configuredPath);
-      if (fs.existsSync(currentPath)) {
-        throw new Error('Config path already exists; this test helper expects missing config path.');
-      }
-
-      const finalConfigPath = path.join(dir, 'configs.json');
-      if (!fs.existsSync(finalConfigPath)) {
-        await vscode.workspace.fs.writeFile(
-          vscode.Uri.file(finalConfigPath),
-          Buffer.from(getDefaultConfigJsonContent(), 'utf8')
-        );
-      }
-      await reverseProxyConfig.update('configFile', finalConfigPath, vscode.ConfigurationTarget.Global);
-      const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(finalConfigPath));
-      await vscode.window.showTextDocument(doc, { preview: false });
-      return finalConfigPath;
+      const toolBoxConfig = vscode.workspace.getConfiguration(TOOLBOX_CONFIGURATION_SECTION);
+      const finalConfigPath = path.join(dir, DEFAULT_CREATED_TOOLBOX_CONFIG_FILE);
+      await toolBoxConfig.update(TOOLBOX_CONFIG_FILE_SETTING, finalConfigPath, vscode.ConfigurationTarget.Global);
+      return openSettingsConfig();
     })
   );
 
@@ -2148,7 +2398,9 @@ export function activate(context: vscode.ExtensionContext): void {
 
   context.subscriptions.push(
     vscode.commands.registerCommand('reverseProxy.test.openKeyProjectSettingsWithDirectory', async (dir: string) => {
-      return pinnedProjectsService?.openSettings(dir);
+      const finalConfigPath = path.join(dir, DEFAULT_CREATED_TOOLBOX_CONFIG_FILE);
+      await vscode.workspace.getConfiguration(TOOLBOX_CONFIGURATION_SECTION).update(TOOLBOX_CONFIG_FILE_SETTING, finalConfigPath, vscode.ConfigurationTarget.Global);
+      return openSettingsConfig();
     })
   );
 }

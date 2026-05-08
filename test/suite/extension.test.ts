@@ -18,18 +18,39 @@ type SidebarSnapshot = {
   }>;
 };
 
-suite('Reverse Proxy Extension Integration Tests', () => {
-  const config = vscode.workspace.getConfiguration('reverseProxy');
+suite('CodeOps Panel Extension Integration Tests', () => {
+  const config = vscode.workspace.getConfiguration('myToolbox');
   const win = vscode.window as unknown as {
     showErrorMessage: typeof vscode.window.showErrorMessage;
     showInformationMessage: typeof vscode.window.showInformationMessage;
+    showInputBox: typeof vscode.window.showInputBox;
+    showQuickPick: typeof vscode.window.showQuickPick;
+    showWarningMessage: typeof vscode.window.showWarningMessage;
+    showOpenDialog: typeof vscode.window.showOpenDialog;
   };
 
   let fakeSshPath = '';
   let fakeGitPath = '';
   let testDir = '';
   let testConfigFilePath = '';
-  let originalConfigFile = 'reverse-proxy.config.json';
+  let originalConfigFile = '.vscode/mytoolbox.config.json';
+
+  const readTestConfig = (): Record<string, unknown> => {
+    if (!testConfigFilePath || !fs.existsSync(testConfigFilePath)) {
+      return {};
+    }
+    return JSON.parse(fs.readFileSync(testConfigFilePath, 'utf8')) as Record<string, unknown>;
+  };
+
+  const getDefaultKeyProjectsConfig = () => ({
+    mode: 'local',
+    rootDir: '',
+    repoNames: [],
+    sshTarget: '',
+    sshPort: 22,
+    gitPath: 'git',
+    sshPath: 'ssh'
+  });
 
   const writeProxyConfig = (
     remoteBindPort: number,
@@ -53,7 +74,8 @@ suite('Reverse Proxy Extension Integration Tests', () => {
                 identityFile: ''
               }
             ]
-          }
+          },
+          keyProjects: readTestConfig().keyProjects ?? getDefaultKeyProjectsConfig()
         },
         null,
         2
@@ -76,7 +98,8 @@ suite('Reverse Proxy Extension Integration Tests', () => {
             localHost: '127.0.0.1',
             localPort: 7897,
             remotes
-          }
+          },
+          keyProjects: readTestConfig().keyProjects ?? getDefaultKeyProjectsConfig()
         },
         null,
         2
@@ -99,11 +122,14 @@ suite('Reverse Proxy Extension Integration Tests', () => {
       };
     }
   ): string => {
-    const vscodeDir = path.join(workspaceDir, '.vscode');
-    fs.mkdirSync(vscodeDir, { recursive: true });
-    const configPath = path.join(vscodeDir, 'mytoolbox.json');
-    fs.writeFileSync(configPath, JSON.stringify(data, null, 2) + '\n', 'utf8');
-    return configPath;
+    void workspaceDir;
+    const existing = readTestConfig();
+    fs.writeFileSync(
+      testConfigFilePath,
+      JSON.stringify({ ...existing, keyProjects: data.keyProjects }, null, 2) + '\n',
+      'utf8'
+    );
+    return testConfigFilePath;
   };
 
   const setKeyProjectsWorkspaceOverride = async (workspaceDir?: string): Promise<void> => {
@@ -121,15 +147,51 @@ suite('Reverse Proxy Extension Integration Tests', () => {
 
   const getDefaultRemoteKey = () => 'yangweijian@10.99.0.1:4001';
 
+  const withWindowPrompts = async <T>(
+    prompts: {
+      inputs?: Array<string | undefined>;
+      picks?: Array<string | undefined>;
+      warnings?: Array<string | undefined>;
+      folders?: Array<string | undefined>;
+    },
+    run: () => Promise<T>
+  ): Promise<T> => {
+    const originalShowInputBox = win.showInputBox;
+    const originalShowQuickPick = win.showQuickPick;
+    const originalShowWarningMessage = win.showWarningMessage;
+    const originalShowOpenDialog = win.showOpenDialog;
+    const inputs = [...(prompts.inputs ?? [])];
+    const picks = [...(prompts.picks ?? [])];
+    const warnings = [...(prompts.warnings ?? [])];
+    const folders = [...(prompts.folders ?? [])];
+
+    win.showInputBox = (async () => inputs.shift()) as typeof vscode.window.showInputBox;
+    win.showQuickPick = (async () => picks.shift()) as typeof vscode.window.showQuickPick;
+    win.showWarningMessage = (async () => warnings.shift()) as typeof vscode.window.showWarningMessage;
+    win.showOpenDialog = (async () => {
+      const folder = folders.shift();
+      return folder === undefined ? undefined : [vscode.Uri.file(folder)];
+    }) as typeof vscode.window.showOpenDialog;
+
+    try {
+      return await run();
+    } finally {
+      win.showInputBox = originalShowInputBox;
+      win.showQuickPick = originalShowQuickPick;
+      win.showWarningMessage = originalShowWarningMessage;
+      win.showOpenDialog = originalShowOpenDialog;
+    }
+  };
+
   suiteSetup(async () => {
-    const extension = vscode.extensions.getExtension('local.reverse-proxy-extension');
-    assert.ok(extension, 'Extension local.reverse-proxy-extension should be installed for tests');
+    const extension = vscode.extensions.getExtension('local.code-ops-panel-extension');
+    assert.ok(extension, 'Extension local.code-ops-panel-extension should be installed for tests');
     await extension!.activate();
 
-    originalConfigFile = config.get<string>('configFile', 'reverse-proxy.config.json');
+    originalConfigFile = config.get<string>('configFile', '.vscode/mytoolbox.config.json');
 
     testDir = fs.mkdtempSync(path.join(os.tmpdir(), 'reverse-proxy-ext-test-'));
-    testConfigFilePath = path.join(testDir, 'reverse-proxy.config.json');
+    testConfigFilePath = path.join(testDir, 'mytoolbox.config.json');
     writeProxyConfig(17897);
 
     fakeGitPath = path.join(testDir, 'fake-git.cmd');
@@ -342,6 +404,7 @@ suite('Reverse Proxy Extension Integration Tests', () => {
     assert.ok(commands.includes('reverseProxy.showStatus'));
     assert.ok(commands.includes('reverseProxy.showLogs'));
     assert.ok(commands.includes('reverseProxy.openSettings'));
+    assert.ok(commands.includes('reverseProxy.bootstrapConfig'));
     assert.ok(!commands.includes('reverseProxy.sidebarToggle'));
     assert.ok(commands.includes('reverseProxy.openKeyProjectSettings'));
     assert.ok(commands.includes('reverseProxy.refreshKeyProjects'));
@@ -381,12 +444,24 @@ suite('Reverse Proxy Extension Integration Tests', () => {
   test('manifest should restrict extensionKind to ui', () => {
     const packageJsonPath = path.resolve(__dirname, '../../package.json');
     const manifest = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8')) as {
+      name?: string;
+      displayName?: string;
+      version?: string;
       extensionKind?: string[];
-      contributes?: { configuration?: unknown };
+      contributes?: {
+        configuration?: unknown;
+        viewsContainers?: { activitybar?: Array<{ title?: string }> };
+        views?: { reverseProxy?: Array<{ name?: string }> };
+      };
     };
+    assert.strictEqual(manifest.name, 'code-ops-panel-extension');
+    assert.strictEqual(manifest.displayName, 'CodeOps Panel');
+    assert.strictEqual(manifest.version, '0.1.0');
     assert.ok(Array.isArray(manifest.extensionKind), 'extensionKind should be an array');
     assert.deepStrictEqual(manifest.extensionKind, ['ui']);
     assert.ok(manifest.contributes?.configuration, 'reverse proxy settings should still be contributed');
+    assert.strictEqual(manifest.contributes?.viewsContainers?.activitybar?.[0]?.title, 'CodeOps Panel');
+    assert.strictEqual(manifest.contributes?.views?.reverseProxy?.[0]?.name, 'CodeOps Panel');
   });
 
   test('path resolution should use local home in remote mode and workspace in local mode', async () => {
@@ -397,9 +472,11 @@ suite('Reverse Proxy Extension Integration Tests', () => {
     fs.mkdirSync(localHome, { recursive: true });
     fs.mkdirSync(path.join(fakeExtension, 'resources'), { recursive: true });
 
-    const relativeConfigName = 'reverse-proxy.config.json';
+    const relativeConfigName = '.vscode/mytoolbox.config.json';
     const workspaceConfigPath = path.join(localWorkspace, relativeConfigName);
     const homeConfigPath = path.join(localHome, relativeConfigName);
+    fs.mkdirSync(path.dirname(workspaceConfigPath), { recursive: true });
+    fs.mkdirSync(path.dirname(homeConfigPath), { recursive: true });
     writeProxyConfig(29991);
     fs.copyFileSync(testConfigFilePath, workspaceConfigPath);
     fs.copyFileSync(testConfigFilePath, homeConfigPath);
@@ -444,10 +521,9 @@ suite('Reverse Proxy Extension Integration Tests', () => {
     assert.strictEqual(reverseChildren[0]?.label, '10.99.0.1:4001: Stopped');
     assert.strictEqual(reverseChildren[1]?.label, 'Open Logs');
     assert.strictEqual(reverseChildren[2]?.label, 'Settings');
-    assert.strictEqual(keyProjectChildren.length, 3, `Expected issue message, refresh, and settings for key projects, got ${keyProjectChildren.length}`);
-    assert.ok(keyProjectChildren[0]?.label.includes('.vscode/mytoolbox.json'));
+    assert.strictEqual(keyProjectChildren.length, 2, `Expected issue message and refresh for key projects, got ${keyProjectChildren.length}`);
+    assert.ok(keyProjectChildren[0]?.label.includes('keyProjects.rootDir'));
     assert.strictEqual(keyProjectChildren[1]?.label, 'Refresh');
-    assert.strictEqual(keyProjectChildren[2]?.label, 'Settings');
   });
 
   test('reverse tunnel view should show multiple remotes as host port rows', async () => {
@@ -475,34 +551,71 @@ suite('Reverse Proxy Extension Integration Tests', () => {
     assert.ok(model.reverseTunnel.rows[1]?.tooltip.includes('target: foo@10.111.90.10'));
   });
 
-  test('reverse tunnel webview should render compact icon rows without table header', async () => {
+  test('webview should render compact soft graphite dashboard sections', async () => {
+    const workspaceDir = path.join(testDir, 'workspace-webview-dashboard');
+    const localRoot = path.join(testDir, 'webview-projects');
+    fs.mkdirSync(path.join(localRoot, 'clean-repo'), { recursive: true });
+    fs.mkdirSync(workspaceDir, { recursive: true });
+    writeKeyProjectsConfig(workspaceDir, {
+      keyProjects: {
+        mode: 'local',
+        rootDir: localRoot,
+        repoNames: ['clean-repo'],
+        gitPath: fakeGitPath,
+        sshPath: fakeSshPath,
+        sshTarget: '',
+        sshPort: 22
+      }
+    });
     writeProxyConfigWithRemotes(
       [
         { remoteHost: '10.99.0.1', remotePort: 4001, remoteUser: 'yangweijian', remoteBindPort: 17897, identityFile: '' }
       ],
       { sshPath: fakeSshPath, connectionReadyDelayMs: 200 }
     );
-    await config.update('configFile', testConfigFilePath, vscode.ConfigurationTarget.Global);
 
-    const html = (await vscode.commands.executeCommand('reverseProxy.test.renderToolBoxHtml')) as string;
+    try {
+      await setKeyProjectsWorkspaceOverride(workspaceDir);
+      await config.update('configFile', testConfigFilePath, vscode.ConfigurationTarget.Global);
+      await vscode.commands.executeCommand('reverseProxy.refreshKeyProjects');
 
-    assert.ok(!html.includes('<span>Host</span>'), 'Reverse tunnel table header should be removed');
-    assert.ok(!html.includes('<span>State</span>'), 'Reverse tunnel table header should be removed');
-    assert.ok(!html.includes('<span>Action</span>'), 'Reverse tunnel table header should be removed');
-    assert.ok(html.includes('grid-template-columns: 20ch minmax(16px, 1fr) 48px 54px;'), 'Right controls should sit after a flexible spacer');
-    assert.ok(html.includes('width: 20ch;'), 'Host code should fit max IPv4 plus four-digit port');
-    assert.ok(html.includes('grid-column: 3;'), 'State and tooltip cell should be moved after the spacer');
-    assert.ok(html.includes('grid-column: 4;'), 'Action button should be moved after the spacer');
-    assert.ok(html.includes('class="rt-host-code">10.99.0.1:4001</code>'), 'Host should render with inline-code styling');
-    assert.ok(html.includes('class="rt-state-icon stopped"'), 'Stopped state should render as icon class');
-    assert.ok(html.includes('class="rt-info-icon"'), 'Info icon should be rendered next to state icon');
-    assert.ok(html.includes('data-tooltip="remote: 10.99.0.1:4001'), 'Info icon should use immediate custom tooltip data');
-    assert.ok(!html.includes('class="rt-info-icon" title='), 'Info icon should not use delayed native title tooltip');
-    assert.ok(html.includes('target: yangweijian@10.99.0.1'), 'Info tooltip should include remote target details');
-    assert.ok(html.includes('external: no'), 'Info tooltip should include external state');
-    assert.ok(html.includes('overflow: visible;'), 'State cell should not clip the custom tooltip');
-    assert.ok(html.includes('z-index: 60;'), 'Hovered tooltip trigger should sit above adjacent controls');
-    assert.ok(!html.includes('>Stopped</span></span>'), 'State text should not be visible in the state cell');
+      const html = (await vscode.commands.executeCommand('reverseProxy.test.renderToolBoxHtml')) as string;
+
+      assert.ok(html.includes('<h1 class="app-title">My Dashboard</h1>'), 'Dashboard brand title should render in the global toolbar');
+      assert.ok(html.includes('data-action="bootstrap"'), 'Top toolbar should render Bootstrap action');
+      assert.ok(html.includes('title="Bootstrap"'), 'Bootstrap button should have a tooltip');
+      assert.ok(!html.includes('Your development command center'), 'Dashboard subtitle should not be rendered');
+      assert.ok(html.includes('Reverse Tunnel Proxies'), 'Reverse tunnel dashboard section should be rendered');
+      assert.ok(!html.includes('Manage your tunnel connections'), 'Reverse tunnel helper text should not be rendered');
+      assert.ok(html.includes('Pinned Projects'), 'Pinned projects dashboard section should be rendered');
+      assert.ok(!html.includes('Track your repository status'), 'Pinned projects helper text should not be rendered');
+      assert.ok(html.includes('<th>Proxy</th><th class="align-right">Action</th>'), 'Reverse tunnel table header should be rendered');
+      assert.ok(html.includes('<th>State</th><th>Repository</th><th>Branch</th><th>Remote</th>'), 'Pinned projects table header should match Figma sample');
+      assert.ok(!html.includes('class="brand-icon"'), 'Lucide-style brand icon should not be rendered');
+      assert.ok(html.includes('--bg: #242628;'), 'Webview should use the Soft Graphite background');
+      assert.ok(html.includes('--card: #2c2f33;'), 'Webview should use the Soft Graphite card color');
+      assert.ok(html.includes('--border: #454a51;'), 'Webview should use the Soft Graphite border color');
+      assert.ok(html.includes('--start-500: #3794ff;'), 'Start button should use the Blue Gray accent');
+      assert.ok(html.includes('background: linear-gradient(90deg, var(--start-500), var(--start-600));'), 'Start button should use the blue gradient');
+      assert.ok(html.includes('<table class="dashboard-table rt-table">'), 'Reverse tunnel should use a table wrapper');
+      assert.ok(html.includes('class="rt-proxy-main"'), 'Reverse tunnel should combine state, host, and info in one proxy cell');
+      assert.ok(html.includes('class="rt-host-code">10.99.0.1:4001</code>'), 'Host should render with inline-code styling');
+      assert.ok(html.includes('class="rt-state-icon stopped"'), 'Stopped state should render as icon class');
+      assert.ok(html.includes('class="rt-info-icon"'), 'Info icon should be rendered next to state icon');
+      assert.ok(html.includes('class="rt-action-button start"'), 'Start action button should be rendered');
+      assert.ok(html.includes('data-tooltip="remote: 10.99.0.1:4001'), 'Info icon should use immediate custom tooltip data');
+      assert.ok(!html.includes('class="rt-info-icon" title='), 'Info icon should not use delayed native title tooltip');
+      assert.ok(html.includes('id="rt-tooltip" class="rt-tooltip"'), 'Reverse tunnel tooltip should render as an independent fixed overlay');
+      assert.ok(html.includes('position: fixed;'), 'Tooltip overlay should use fixed positioning to avoid clipping');
+      assert.ok(html.includes('showReverseTooltip'), 'Tooltip JS should position the independent overlay on hover');
+      assert.ok(html.includes('target: yangweijian@10.99.0.1'), 'Info tooltip should include remote target details');
+      assert.ok(html.includes('external: no'), 'Info tooltip should include external state');
+      assert.ok(html.includes('clean-repo.git'), 'Pinned project repository should render in the table after refresh');
+      assert.ok(html.includes('class="project-state-icon synced"'), 'Pinned project sync state should render as icon class');
+      assert.ok(!html.includes('id="key-settings"'), 'Pinned projects section should not render a settings button');
+    } finally {
+      await setKeyProjectsWorkspaceOverride();
+    }
   });
 
   test('reverse tunnel config should reject legacy single remote shape and duplicate remotes', async () => {
@@ -578,12 +691,12 @@ suite('Reverse Proxy Extension Integration Tests', () => {
     try {
       await setKeyProjectsWorkspaceOverride(workspaceDir);
       let items = await getSidebarChildren('Pinned Projects');
-      assert.deepStrictEqual(items.map((item) => item.label), ['Click Refresh to load key project status.', 'Refresh', 'Settings']);
+      assert.deepStrictEqual(items.map((item) => item.label), ['dirty-repo', 'clean-repo', 'Refresh']);
 
       await vscode.commands.executeCommand('reverseProxy.refreshKeyProjects');
 
       items = await getSidebarChildren('Pinned Projects');
-      assert.deepStrictEqual(items.map((item) => item.label), ['\u2757 dirty-repo.git: feature-dirty - behind 2', '\u2714\uFE0F clean-repo.git: main - synced', 'Refresh', 'Settings']);
+      assert.deepStrictEqual(items.map((item) => item.label), ['\u2757 dirty-repo.git: feature-dirty - behind 2', '\u2714\uFE0F clean-repo.git: main - synced', 'Refresh']);
       assert.ok(items[0]?.tooltip?.includes('- repo: `dirty-repo.git`') && items[0]?.tooltip?.includes('- remote: `behind 2`'));
       assert.ok(items[0]?.tooltip?.includes('- upstream: `origin/feature-dirty`'));
       assert.ok(items[0]?.tooltip?.includes('  - `1 .M N... 100644 100644 100644 123456 123456 src/app.ts`'));
@@ -628,12 +741,12 @@ suite('Reverse Proxy Extension Integration Tests', () => {
     try {
       await setKeyProjectsWorkspaceOverride(workspaceDir);
       let items = await getSidebarChildren('Pinned Projects');
-      assert.deepStrictEqual(items.map((item) => item.label), ['Click Refresh to load key project status.', 'Refresh', 'Settings']);
+      assert.deepStrictEqual(items.map((item) => item.label), ['dirty-repo', 'clean-repo', 'Refresh']);
 
       await vscode.commands.executeCommand('reverseProxy.refreshKeyProjects');
 
       items = await getSidebarChildren('Pinned Projects');
-      assert.deepStrictEqual(items.map((item) => item.label), ['\u2757 dirty-repo.git: feature-ssh - diverged +1/-1', '\u2714\uFE0F clean-repo.git: main - synced', 'Refresh', 'Settings']);
+      assert.deepStrictEqual(items.map((item) => item.label), ['\u2757 dirty-repo.git: feature-ssh - diverged +1/-1', '\u2714\uFE0F clean-repo.git: main - synced', 'Refresh']);
       assert.ok(items[0]?.tooltip?.includes('- repo: `dirty-repo.git`') && items[0]?.tooltip?.includes('- path: `/remote/dirty-repo`'));
       assert.ok(items[0]?.tooltip?.includes('- remote: `diverged +1/-1`'));
       assert.ok(items[0]?.tooltip?.includes('  - `1 .M N... 100644 100644 100644 123456 123456 remote/file.txt`'));
@@ -697,7 +810,7 @@ suite('Reverse Proxy Extension Integration Tests', () => {
       await vscode.commands.executeCommand('reverseProxy.refreshKeyProjects');
 
       const items = await getSidebarChildren('Pinned Projects');
-      assert.deepStrictEqual(items.map((item) => item.label), ['\u2714\uFE0F root-repo.git: main - synced', 'Refresh', 'Settings']);
+      assert.deepStrictEqual(items.map((item) => item.label), ['\u2714\uFE0F root-repo.git: main - synced', 'Refresh']);
       assert.ok(items[0]?.tooltip?.includes('- repo: `root-repo.git`'));
       assert.ok(items[0]?.tooltip?.includes('- remote: `synced`'));
 
@@ -712,18 +825,22 @@ suite('Reverse Proxy Extension Integration Tests', () => {
     }
   });
 
-  test('key project settings helper should create workspace mytoolbox.json when missing', async () => {
+  test('key project settings helper should create unified .vscode/mytoolbox.config.json when missing', async () => {
     const selectedDir = path.join(testDir, 'key-project-settings-target');
     fs.mkdirSync(selectedDir, { recursive: true });
 
-    const createdPath = (await vscode.commands.executeCommand(
-      'reverseProxy.test.openKeyProjectSettingsWithDirectory',
-      selectedDir
-    )) as string;
+    const createdPath = await withWindowPrompts(
+      { picks: ['Create default config'] },
+      async () => (await vscode.commands.executeCommand(
+        'reverseProxy.test.openKeyProjectSettingsWithDirectory',
+        selectedDir
+      )) as string
+    );
 
-    assert.strictEqual(createdPath.toLowerCase(), path.join(selectedDir, '.vscode', 'mytoolbox.json').toLowerCase());
-    assert.ok(fs.existsSync(createdPath), 'workspace mytoolbox.json should be created');
-    const created = JSON.parse(fs.readFileSync(createdPath, 'utf8')) as { keyProjects?: { sshPort?: number } };
+    assert.strictEqual(createdPath.toLowerCase(), path.join(selectedDir, '.vscode', 'mytoolbox.config.json').toLowerCase());
+    assert.ok(fs.existsSync(createdPath), 'unified mytoolbox.config.json should be created');
+    const created = JSON.parse(fs.readFileSync(createdPath, 'utf8')) as { ReverseTunnel?: unknown; keyProjects?: { sshPort?: number } };
+    assert.ok(created.ReverseTunnel, 'ReverseTunnel section should exist');
     assert.ok(created.keyProjects, 'keyProjects section should exist');
     assert.strictEqual(created.keyProjects?.sshPort, 22);
   });
@@ -808,6 +925,10 @@ suite('Reverse Proxy Extension Integration Tests', () => {
       assert.strictEqual(items[0]?.enabled, false);
       assert.ok(items[0]?.tooltip?.includes('Started externally'));
       assert.ok(items[0]?.tooltip?.includes('external: yes'));
+
+      const html = (await vscode.commands.executeCommand('reverseProxy.test.renderToolBoxHtml')) as string;
+      assert.ok(html.includes('class="rt-action-button disabled"'), 'External webview row should render a disabled action button');
+      assert.ok(html.includes('title="Started yangweijian@10.99.0.1" disabled><span>Started</span></button>'));
     } finally {
       delete process.env.RPX_FAKE_MODE;
       if (externalProcess) {
@@ -818,20 +939,23 @@ suite('Reverse Proxy Extension Integration Tests', () => {
     }
   });
 
-  test('settings helper should create configs.json and update configFile when target path is missing', async () => {
-    const missingRelative = 'definitely-missing-configs\\proxy-config.json';
+  test('settings helper should create .vscode/mytoolbox.config.json and update configFile when target path is missing', async () => {
+    const missingRelative = 'definitely-missing-configs\\mytoolbox.config.json';
     await config.update('configFile', missingRelative, vscode.ConfigurationTarget.Global);
 
     const selectedDir = path.join(testDir, 'settings-target');
     fs.mkdirSync(selectedDir, { recursive: true });
 
-    const createdPath = (await vscode.commands.executeCommand(
-      'reverseProxy.test.openSettingsWithDirectory',
-      selectedDir
-    )) as string;
+    const createdPath = await withWindowPrompts(
+      { picks: ['Create default config'] },
+      async () => (await vscode.commands.executeCommand(
+        'reverseProxy.test.openSettingsWithDirectory',
+        selectedDir
+      )) as string
+    );
 
-    assert.strictEqual(createdPath, path.join(selectedDir, 'configs.json'));
-    assert.ok(fs.existsSync(createdPath), 'configs.json should be created');
+    assert.strictEqual(createdPath, path.join(selectedDir, '.vscode', 'mytoolbox.config.json'));
+    assert.ok(fs.existsSync(createdPath), 'mytoolbox.config.json should be created');
 
     const created = JSON.parse(fs.readFileSync(createdPath, 'utf8')) as Record<string, unknown>;
     const section = created.ReverseTunnel as Record<string, unknown>;
@@ -844,8 +968,176 @@ suite('Reverse Proxy Extension Integration Tests', () => {
     assert.strictEqual(remotes[0]?.remoteHost, 'FOO_ADDRESS');
     assert.strictEqual(remotes[0]?.remoteUser, 'FOO_USER');
 
-    const updatedConfigFile = vscode.workspace.getConfiguration('reverseProxy').get<string>('configFile', '');
+    const updatedConfigFile = vscode.workspace.getConfiguration('myToolbox').get<string>('configFile', '');
     assert.strictEqual(updatedConfigFile, createdPath);
+  });
+
+  test('bootstrap command should generate local mode config', async () => {
+    const bootstrapDir = path.join(testDir, 'bootstrap-local');
+    const bootstrapPath = path.join(bootstrapDir, 'mytoolbox.config.json');
+    await config.update('configFile', bootstrapPath, vscode.ConfigurationTarget.Global);
+
+    const createdPath = await withWindowPrompts(
+      {
+        inputs: ['127.0.0.1:7897', '10.10.0.1', '4001', 'alice', '18000', 'MyToolBox'],
+        picks: ['Add remote', 'Finish remotes', 'local', 'Add repo', 'Finish repos'],
+        folders: ['E:/projects']
+      },
+      async () => (await vscode.commands.executeCommand('reverseProxy.bootstrapConfig')) as string
+    );
+
+    assert.strictEqual(createdPath, bootstrapPath);
+    const created = JSON.parse(fs.readFileSync(bootstrapPath, 'utf8')) as {
+      ReverseTunnel: { localHost: string; localPort: number; remotes: Array<{ remoteHost: string; remotePort: number; remoteUser: string }> };
+      keyProjects: { mode: string; rootDir: string; repoNames: string[] };
+    };
+    assert.strictEqual(created.ReverseTunnel.localHost, '127.0.0.1');
+    assert.strictEqual(created.ReverseTunnel.localPort, 7897);
+    assert.deepStrictEqual(created.ReverseTunnel.remotes[0], {
+      remoteHost: '10.10.0.1',
+      remotePort: 4001,
+      remoteUser: 'alice',
+      remoteBindPort: 18000,
+      identityFile: ''
+    });
+    assert.strictEqual(created.keyProjects.mode, 'local');
+    assert.strictEqual(path.normalize(created.keyProjects.rootDir).toLowerCase(), path.normalize('E:/projects').toLowerCase());
+    assert.deepStrictEqual(created.keyProjects.repoNames, ['MyToolBox']);
+  });
+
+  test('settings helper should offer bootstrap wizard when config is missing', async () => {
+    const bootstrapDir = path.join(testDir, 'settings-bootstrap');
+
+    const createdPath = await withWindowPrompts(
+      {
+        inputs: ['127.0.0.1:7897', '10.20.0.1', '2222', 'bob', '19000', 'bob@example.com', '2200', '/remote/projects', 'service-a'],
+        picks: ['Run bootstrap wizard', 'Add remote', 'Finish remotes', 'ssh', 'Add repo', 'Finish repos']
+      },
+      async () => (await vscode.commands.executeCommand(
+        'reverseProxy.test.openSettingsWithDirectory',
+        bootstrapDir
+      )) as string
+    );
+
+    const created = JSON.parse(fs.readFileSync(createdPath, 'utf8')) as {
+      ReverseTunnel: { remotes: Array<{ remoteHost: string; remotePort: number; remoteUser: string }> };
+      keyProjects: { mode: string; sshTarget: string; sshPort: number; rootDir: string; repoNames: string[] };
+    };
+    assert.strictEqual(createdPath, path.join(bootstrapDir, '.vscode', 'mytoolbox.config.json'));
+    assert.deepStrictEqual(created.ReverseTunnel.remotes[0], {
+      remoteHost: '10.20.0.1',
+      remotePort: 2222,
+      remoteUser: 'bob',
+      remoteBindPort: 19000,
+      identityFile: ''
+    });
+    assert.strictEqual(created.keyProjects.mode, 'ssh');
+    assert.strictEqual(created.keyProjects.sshTarget, 'bob@example.com');
+    assert.strictEqual(created.keyProjects.sshPort, 2200);
+    assert.strictEqual(created.keyProjects.rootDir, '/remote/projects');
+    assert.deepStrictEqual(created.keyProjects.repoNames, ['service-a']);
+  });
+
+  test('bootstrap command should not overwrite existing config without confirmation', async () => {
+    const bootstrapDir = path.join(testDir, 'bootstrap-no-overwrite');
+    fs.mkdirSync(bootstrapDir, { recursive: true });
+    const bootstrapPath = path.join(bootstrapDir, 'mytoolbox.config.json');
+    fs.writeFileSync(bootstrapPath, '{"sentinel":true}\n', 'utf8');
+    await config.update('configFile', bootstrapPath, vscode.ConfigurationTarget.Global);
+
+    const result = await withWindowPrompts(
+      { warnings: [undefined] },
+      async () => (await vscode.commands.executeCommand('reverseProxy.bootstrapConfig')) as string | undefined
+    );
+
+    assert.strictEqual(result, undefined);
+    assert.strictEqual(fs.readFileSync(bootstrapPath, 'utf8'), '{"sentinel":true}\n');
+  });
+
+  test('bootstrap command should overwrite existing config after confirmation', async () => {
+    const bootstrapDir = path.join(testDir, 'bootstrap-overwrite');
+    fs.mkdirSync(bootstrapDir, { recursive: true });
+    const bootstrapPath = path.join(bootstrapDir, 'mytoolbox.config.json');
+    fs.writeFileSync(bootstrapPath, '{"sentinel":true}\n', 'utf8');
+    await config.update('configFile', bootstrapPath, vscode.ConfigurationTarget.Global);
+
+    await withWindowPrompts(
+      {
+        warnings: ['Overwrite'],
+        inputs: ['127.0.0.1:7897', '10.30.0.1', '4001', 'carol', '17897', '.'],
+        picks: ['Add remote', 'Finish remotes', 'local', 'Add repo', 'Finish repos'],
+        folders: ['E:/projects']
+      },
+      async () => {
+        await vscode.commands.executeCommand('reverseProxy.bootstrapConfig');
+      }
+    );
+
+    const created = JSON.parse(fs.readFileSync(bootstrapPath, 'utf8')) as { sentinel?: boolean; keyProjects: { repoNames: string[] } };
+    assert.strictEqual(created.sentinel, undefined);
+    assert.deepStrictEqual(created.keyProjects.repoNames, ['.']);
+  });
+
+  test('bootstrap command should allow empty remotes and repoNames', async () => {
+    const bootstrapDir = path.join(testDir, 'bootstrap-empty-lists');
+    const bootstrapPath = path.join(bootstrapDir, 'mytoolbox.config.json');
+    await config.update('configFile', bootstrapPath, vscode.ConfigurationTarget.Global);
+
+    await withWindowPrompts(
+      {
+        inputs: ['127.0.0.1:7897'],
+        picks: ['Finish remotes', 'local', 'Finish repos'],
+        folders: ['E:/empty-projects']
+      },
+      async () => {
+        await vscode.commands.executeCommand('reverseProxy.bootstrapConfig');
+      }
+    );
+
+    const created = JSON.parse(fs.readFileSync(bootstrapPath, 'utf8')) as {
+      ReverseTunnel: { remotes: unknown[] };
+      keyProjects: { rootDir: string; repoNames: string[] };
+    };
+    assert.deepStrictEqual(created.ReverseTunnel.remotes, []);
+    assert.strictEqual(path.normalize(created.keyProjects.rootDir).toLowerCase(), path.normalize('E:/empty-projects').toLowerCase());
+    assert.deepStrictEqual(created.keyProjects.repoNames, []);
+  });
+
+  test('bootstrap command should reject invalid remoteBindPort without writing config', async () => {
+    const bootstrapDir = path.join(testDir, 'bootstrap-invalid-bind');
+    const bootstrapPath = path.join(bootstrapDir, 'mytoolbox.config.json');
+    await config.update('configFile', bootstrapPath, vscode.ConfigurationTarget.Global);
+
+    await assert.rejects(
+      () => withWindowPrompts(
+        {
+          inputs: ['127.0.0.1:7897', '10.40.0.1', '4001', 'dave', 'not-a-port'],
+          picks: ['Add remote']
+        },
+        async () => {
+          await vscode.commands.executeCommand('reverseProxy.bootstrapConfig');
+        }
+      ),
+      /remoteBindPort/
+    );
+    assert.ok(!fs.existsSync(bootstrapPath), 'Invalid remoteBindPort should not write config');
+  });
+
+  test('bootstrap command should reject invalid local target without writing config', async () => {
+    const bootstrapDir = path.join(testDir, 'bootstrap-invalid');
+    const bootstrapPath = path.join(bootstrapDir, 'mytoolbox.config.json');
+    await config.update('configFile', bootstrapPath, vscode.ConfigurationTarget.Global);
+
+    await assert.rejects(
+      () => withWindowPrompts(
+        { inputs: ['127.0.0.1:not-a-port'] },
+        async () => {
+          await vscode.commands.executeCommand('reverseProxy.bootstrapConfig');
+        }
+      ),
+      /localPort/
+    );
+    assert.ok(!fs.existsSync(bootstrapPath), 'Invalid bootstrap input should not write config');
   });
 
   test('remote row start should show error when ssh does not exist', async () => {

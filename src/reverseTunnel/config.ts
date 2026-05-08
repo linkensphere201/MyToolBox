@@ -89,7 +89,7 @@ export function resolveConfigPathWithContext(configFile: string, options: Resolv
     throw new Error('Extension context is not initialized.');
   }
 
-  return path.join(extensionPath, 'resources', 'reverse-proxy.config.json');
+  return path.join(extensionPath, 'resources', 'mytoolbox.config.json');
 }
 
 export function loadFileProxyConfig(filePath: string): FileProxyConfig {
@@ -143,10 +143,6 @@ export function loadFileProxyConfig(filePath: string): FileProxyConfig {
     return remote;
   });
 
-  if (remotes.length === 0) {
-    throw new Error(`Invalid config field 'ReverseTunnel.remotes': expected at least one remote.`);
-  }
-
   return {
     sshPath: assertString(data.sshPath, 'ReverseTunnel.sshPath'),
     connectionReadyDelayMs,
@@ -192,6 +188,15 @@ export function getDefaultConfigJsonContent(): string {
             identityFile: ''
           }
         ]
+      },
+      keyProjects: {
+        mode: 'local',
+        rootDir: '',
+        repoNames: [],
+        sshTarget: '',
+        sshPort: 22,
+        gitPath: 'git',
+        sshPath: 'ssh'
       }
     },
     null,

@@ -7,10 +7,12 @@ node_modules/**
 release-artifacts/**
 src/**
 test/**
+scripts/**
 out/runTest.js
 out/runTest.js.map
 out/suite/**
 tsconfig.json
 tsconfig.test.json
 package-lock.json
+mytoolbox.config.json
 **/*.map

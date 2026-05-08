@@ -1,9 +1,13 @@
 {
-  "name": "reverse-proxy-extension",
-  "displayName": "Reverse Proxy",
-  "description": "Start and stop an SSH reverse proxy from VS Code.",
-  "version": "0.0.1",
+  "name": "code-ops-panel-extension",
+  "displayName": "CodeOps Panel",
+  "description": "CodeOps dashboard panel for reverse tunnels and pinned project status.",
+  "version": "0.1.0",
   "publisher": "local",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/linkensphere201/vscode-toolbox.git"
+  },
   "engines": {
     "vscode": "^1.90.0"
   },
@@ -17,6 +21,7 @@
     "onCommand:reverseProxy.showStatus",
     "onCommand:reverseProxy.showLogs",
     "onCommand:reverseProxy.openSettings",
+    "onCommand:reverseProxy.bootstrapConfig",
     "onView:reverseProxy.sidebarView",
     "onCommand:reverseProxy.openKeyProjectSettings",
     "onCommand:reverseProxy.refreshKeyProjects"
@@ -26,30 +31,34 @@
     "commands": [
       {
         "command": "reverseProxy.showStatus",
-        "title": "Reverse Proxy: Show Status"
+        "title": "CodeOps Panel: Show Status"
       },
       {
         "command": "reverseProxy.showLogs",
-        "title": "Reverse Proxy: Show Logs"
+        "title": "CodeOps Panel: Show Logs"
       },
       {
         "command": "reverseProxy.openSettings",
-        "title": "Reverse Proxy: Settings"
+        "title": "CodeOps Panel: Settings"
+      },
+      {
+        "command": "reverseProxy.bootstrapConfig",
+        "title": "CodeOps Panel: Bootstrap Config"
       },
       {
         "command": "reverseProxy.refreshKeyProjects",
-        "title": "ToolBox: Refresh Key Projects"
+        "title": "CodeOps Panel: Refresh Key Projects"
       },
       {
         "command": "reverseProxy.openKeyProjectSettings",
-        "title": "ToolBox: Key Projects Settings"
+        "title": "CodeOps Panel: Settings"
       }
     ],
     "viewsContainers": {
       "activitybar": [
         {
           "id": "reverseProxy",
-          "title": "ToolBox",
+          "title": "CodeOps Panel",
           "icon": "media/proxy.svg"
         }
       ]
@@ -58,18 +67,18 @@
       "reverseProxy": [
         {
           "id": "reverseProxy.sidebarView",
-          "name": "ToolBox",
+          "name": "CodeOps Panel",
           "type": "webview"
         }
       ]
     },
     "configuration": {
-      "title": "Reverse Proxy",
+      "title": "CodeOps Panel",
       "properties": {
-        "reverseProxy.configFile": {
+        "myToolbox.configFile": {
           "type": "string",
-          "default": "reverse-proxy.config.json",
-          "description": "Path to reverse proxy config JSON file. Relative path resolves from workspace root."
+          "default": ".vscode/mytoolbox.config.json",
+          "description": "Path to the ToolBox config JSON file. Relative path resolves from workspace root."
         }
       }
     }
@@ -79,6 +88,7 @@
     "watch": "tsc -watch -p ./",
     "compile-tests": "tsc -p ./tsconfig.test.json",
     "pretest": "npm run compile && npm run compile-tests",
+    "package:vsix": "node scripts/package-vsix.js",
     "test": "node ./out/runTest.js"
   },
   "devDependencies": {

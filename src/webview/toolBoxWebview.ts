@@ -20,8 +20,8 @@ export type ToolBoxWebviewProviderDeps = {
   getPinnedProjectDetail: (repoName: string) => Promise<DetailMessage>;
   showLogs: () => void;
   openProxySettings: () => Promise<void>;
+  bootstrapConfig: () => Promise<void>;
   refreshPinnedProjects: () => Promise<void>;
-  openPinnedProjectSettings: () => Promise<unknown>;
   startReverseTunnel: (remoteKey: string) => Promise<void>;
   stopReverseTunnel: (remoteKey: string) => void;
 };
@@ -90,11 +90,11 @@ export class ToolBoxWebviewProvider implements vscode.WebviewViewProvider {
       case 'proxySettings':
         await this.deps.openProxySettings();
         return;
+      case 'bootstrap':
+        await this.deps.bootstrapConfig();
+        return;
       case 'keyRefresh':
         await this.deps.refreshPinnedProjects();
-        return;
-      case 'keySettings':
-        await this.deps.openPinnedProjectSettings();
         return;
       default:
         return;
