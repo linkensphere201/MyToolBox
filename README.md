@@ -1,5 +1,8 @@
 ﻿# CodeOps Panel
 
+[![MIT licensed][mit-badge]][mit-url]
+[![Build Status][actions-badge]][actions-url]
+
 <p align="center">
   <img src="media/Icon1.png" alt="CodeOps Panel icon" width="128" height="128">
 </p>
@@ -105,4 +108,8 @@ Use `Add` to select a `.code-workspace` file. The card opens that workspace in a
 
 See `readme-cn.md` for Chinese usage documentation.
 
+[mit-badge]: https://img.shields.io/badge/license-MIT-blue.svg
+[mit-url]: LICENSE
+[actions-badge]: https://github.com/linkensphere201/vscode-toolbox/actions/workflows/ci.yml/badge.svg
+[actions-url]: https://github.com/linkensphere201/vscode-toolbox/actions/workflows/ci.yml
 
