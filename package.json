@@ -76,6 +76,11 @@
           "type": "string",
           "default": ".vscode/mytoolbox.config.json",
           "description": "Path to the ToolBox config JSON file. Relative path resolves from workspace root."
+        },
+        "myToolbox.debugLogs": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable verbose debug logs in the CodeOps Panel output channel."
         }
       }
     }

@@ -23,6 +23,7 @@ function iconSvg(name: string, className = ''): string {
     activity: '<path d="M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.49 12H2"/>',
     check: '<path d="M20 6 9 17l-5-5"/>',
     gitBranch: '<line x1="6" x2="6" y1="3" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/>',
+    folder: '<path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>',
     heart: '<path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z"/>',
     info: '<circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/>',
     linkOff: '<path d="M9 17H7A5 5 0 0 1 7 7"/><path d="M15 7h2a5 5 0 0 1 4 8"/><line x1="8" x2="12" y1="12" y2="12"/><line x1="2" x2="22" y1="2" y2="22"/>',
@@ -107,6 +108,45 @@ function getPinnedProjectTone(row: any): string {
     return 'diverged';
   }
   return row.clean ? 'synced' : 'dirty';
+}
+
+function getFavoriteWorkspaceLanguageBadge(language: string): { label: string; tone: string } {
+  const normalized = String(language || '').toLowerCase();
+  if (normalized === 'javascript') {
+    return { label: 'JS', tone: 'javascript' };
+  }
+  if (normalized === 'typescript') {
+    return { label: 'TS', tone: 'typescript' };
+  }
+  if (normalized === 'rust') {
+    return { label: 'RS', tone: 'rust' };
+  }
+  if (normalized === 'python') {
+    return { label: 'PY', tone: 'python' };
+  }
+  if (normalized === 'c++') {
+    return { label: 'CP', tone: 'cpp' };
+  }
+  if (normalized === 'go') {
+    return { label: 'GO', tone: 'go' };
+  }
+  if (normalized === 'java') {
+    return { label: 'JV', tone: 'java' };
+  }
+  const words = String(language || '')
+    .replace(/[^A-Za-z0-9+#]/g, ' ')
+    .split(/\s+/)
+    .filter(Boolean);
+  const label = (words.length > 1 ? words.map((word) => word[0]).join('') : (words[0] ?? '?')).slice(0, 2).toUpperCase();
+  return { label, tone: 'default' };
+}
+
+function getFavoriteWorkspaceLanguageColorVar(tone: string): string {
+  const normalized = String(tone || '').replace(/[^a-z]/g, '');
+  if (['javascript', 'typescript', 'rust', 'python', 'cpp', 'go', 'java'].includes(normalized)) {
+    return 'var(--lang-' + normalized + ')';
+  }
+  return 'var(--lang-default)';
 }
 
 export function renderToolBoxWebview(webview: vscode.Webview, model: any): string {
@@ -198,22 +238,60 @@ export function renderToolBoxWebview(webview: vscode.Webview, model: any): strin
     ].join('');
   }
 
-  const favoriteToolbar = '<button id="favorite-add" class="chrome-button" title="Add workspace" aria-label="Add workspace"><span class="action-icon" aria-hidden="true">' + iconSvg('plus') + '</span></button>';
+  const favoriteRefreshClass = 'chrome-button' + (model.favoriteWorkspaces.refreshing ? ' refreshing' : '');
+  const favoriteToolbar = [
+    '<button id="favorite-refresh" class="' + favoriteRefreshClass + '" title="' + escapeHtml(model.favoriteWorkspaces.refreshing ? 'Refreshing...' : 'Refresh workspaces') + '" aria-label="' + escapeHtml(model.favoriteWorkspaces.refreshing ? 'Refreshing...' : 'Refresh workspaces') + '" ' + (model.favoriteWorkspaces.refreshing ? 'disabled' : '') + '><span class="action-icon" aria-hidden="true">' + iconSvg('refresh') + '</span></button>',
+    '<button id="favorite-add" class="chrome-button" title="Add workspace" aria-label="Add workspace"><span class="action-icon" aria-hidden="true">' + iconSvg('plus') + '</span></button>'
+  ].join('');
   const favoriteRows = model.favoriteWorkspaces.rows
     .map((row: any, index: number) => {
       const pathValue = escapeHtmlAttribute(row.workspacePath);
-      const description = String(row.description ?? '');
+      const folderSummary = String(row.folderSummary ?? '');
+      const languages = Array.isArray(row.languages) ? row.languages.slice(0, 2) : [];
+      const primaryBadge = languages[0] ? getFavoriteWorkspaceLanguageBadge(String(languages[0].name ?? '')) : null;
+      const workspaceAccent = primaryBadge ? getFavoriteWorkspaceLanguageColorVar(primaryBadge.tone) : 'var(--purple-500)';
+      let languagePercentTotal = 0;
+      const languageDistribution = languages
+        .map((language: any) => {
+          const name = String(language.name ?? '');
+          const percent = Math.max(0, Math.min(100, Number.isFinite(language.percent) ? Number(language.percent) : 0));
+          languagePercentTotal += percent;
+          const badge = getFavoriteWorkspaceLanguageBadge(name);
+          return '<span class="workspace-language-segment ' + escapeHtmlAttribute(badge.tone) + '" style="width: ' + escapeHtmlAttribute(String(percent)) + '%"></span>';
+        })
+        .join('');
+      const otherPercent = Math.max(0, 100 - Math.min(100, languagePercentTotal));
+      const languageDistributionBar = languageDistribution
+        ? '<span class="workspace-language-bar" aria-hidden="true">' + languageDistribution + (otherPercent > 0 ? '<span class="workspace-language-segment default" style="width: ' + escapeHtmlAttribute(String(otherPercent)) + '%"></span>' : '') + '</span>'
+        : '';
+      const languageRows = languages
+        .map((language: any) => {
+          const name = String(language.name ?? '');
+          const percent = Number.isFinite(language.percent) ? Number(language.percent) : 0;
+          const badge = getFavoriteWorkspaceLanguageBadge(name);
+          return [
+            '<span class="workspace-language">',
+            '  <span class="workspace-language-dot ' + escapeHtmlAttribute(badge.tone) + '" aria-hidden="true"></span>',
+            '  <span class="workspace-language-text">' + escapeHtml(name + ' ' + String(percent) + '%') + '</span>',
+            '</span>'
+          ].join('');
+        })
+        .join('');
       const unavailable = row.available ? '' : ' unavailable';
       const title = row.available ? 'Open workspace' : escapeHtml(row.error || 'Workspace unavailable');
+      const nameTitle = escapeHtmlAttribute(row.name);
       return [
-        '<button class="workspace-card' + unavailable + '" data-workspace-path="' + pathValue + '" title="' + title + '" style="animation-delay: ' + String(index * 50) + 'ms">',
+        '<button class="workspace-card' + unavailable + '" data-workspace-path="' + pathValue + '" title="' + title + '" style="--workspace-accent: ' + workspaceAccent + '; animation-delay: ' + String(index * 50) + 'ms">',
         '  <span class="workspace-card-top">',
-        '    <span class="workspace-name">' + escapeHtml(row.name) + '</span>',
+        '    <span class="workspace-name" title="' + nameTitle + '">' + escapeHtml(row.name) + '</span>',
         '    <span class="workspace-card-actions">',
         '      <span class="workspace-remove" role="button" tabindex="0" data-workspace-remove="' + pathValue + '" aria-label="Remove workspace">' + iconSvg('x') + '</span>',
         '    </span>',
         '  </span>',
-        description ? '  <span class="workspace-description">' + escapeHtml(description) + '</span>' : '  <span class="workspace-description empty-description"></span>',
+        folderSummary ? '  <span class="workspace-folders"><span class="workspace-folder-icon" aria-hidden="true">' + iconSvg('folder') + '</span><span class="workspace-folder-text">' + escapeHtml(folderSummary) + '</span></span>' : '  <span class="workspace-folders empty-description"></span>',
+        languageRows ? '  <span class="workspace-language-divider" aria-hidden="true"></span>' : '',
+        languageDistributionBar,
+        languageRows ? '  <span class="workspace-languages">' + languageRows + '</span>' : '',
         '</button>'
       ].join('');
     })
@@ -267,6 +345,14 @@ export function renderToolBoxWebview(webview: vscode.Webview, model: any): strin
       --amber-500: #d7a83f;
       --blue-400: #66b3ff;
       --blue-500: #3794ff;
+      --lang-javascript: #f4c527;
+      --lang-typescript: #3b82f6;
+      --lang-rust: #d97706;
+      --lang-python: #3976ab;
+      --lang-cpp: #7c3aed;
+      --lang-go: #06b6d4;
+      --lang-java: #dc2626;
+      --lang-default: #64748b;
     }
     * {
       box-sizing: border-box;
@@ -741,15 +827,15 @@ export function renderToolBoxWebview(webview: vscode.Webview, model: any): strin
     }
     .workspace-card {
       width: 100%;
-      min-height: 112px;
+      min-height: 124px;
       display: grid;
       align-content: start;
-      gap: 10px;
+      gap: 12px;
       position: relative;
       overflow: hidden;
       border: 1px solid var(--border);
       border-radius: 8px;
-      padding: 12px;
+      padding: 14px;
       background:
         linear-gradient(180deg, rgba(255, 255, 255, 0.045), rgba(255, 255, 255, 0)),
         var(--card);
@@ -766,8 +852,8 @@ export function renderToolBoxWebview(webview: vscode.Webview, model: any): strin
       position: absolute;
       inset: 0 auto 0 0;
       width: 3px;
-      background: linear-gradient(180deg, var(--purple-500), rgba(177, 128, 255, 0.36));
-      box-shadow: 0 0 14px rgba(177, 128, 255, 0.38);
+      background: linear-gradient(180deg, var(--workspace-accent, var(--purple-500)), color-mix(in srgb, var(--workspace-accent, var(--purple-500)) 36%, transparent));
+      box-shadow: 0 0 14px color-mix(in srgb, var(--workspace-accent, var(--purple-500)) 38%, transparent);
     }
     .workspace-card:hover,
     .workspace-card:focus-visible {
@@ -791,7 +877,7 @@ export function renderToolBoxWebview(webview: vscode.Webview, model: any): strin
       min-width: 0;
       overflow: hidden;
       color: var(--text);
-      font-size: 13px;
+      font-size: 14px;
       font-weight: 600;
       line-height: 1.35;
       text-overflow: ellipsis;
@@ -813,11 +899,18 @@ export function renderToolBoxWebview(webview: vscode.Webview, model: any): strin
     .workspace-remove {
       border-radius: 5px;
       color: var(--muted);
-      transition: background-color 150ms ease, color 150ms ease;
+      opacity: 0.46;
+      transition: background-color 150ms ease, color 150ms ease, opacity 150ms ease;
     }
     .workspace-remove svg {
       width: 13px;
       height: 13px;
+    }
+    .workspace-card:hover .workspace-remove,
+    .workspace-card:focus-visible .workspace-remove,
+    .workspace-remove:hover,
+    .workspace-remove:focus-visible {
+      opacity: 1;
     }
     .workspace-remove:hover,
     .workspace-remove:focus-visible {
@@ -825,18 +918,103 @@ export function renderToolBoxWebview(webview: vscode.Webview, model: any): strin
       color: var(--danger-400);
       outline: none;
     }
-    .workspace-description {
+    .workspace-folders {
+      min-width: 0;
+      display: grid;
+      grid-template-columns: 14px minmax(0, 1fr);
+      align-items: start;
+      gap: 6px;
       color: var(--muted-2);
-      font-size: 12px;
-      line-height: 1.45;
+      font-size: 11px;
+      line-height: 1.35;
+    }
+    .workspace-folder-icon {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 14px;
+      height: 14px;
+      color: var(--muted);
+      opacity: 0.78;
+    }
+    .workspace-folder-icon svg {
+      width: 13px;
+      height: 13px;
+    }
+    .workspace-folder-text {
+      min-width: 0;
       overflow: hidden;
       overflow-wrap: anywhere;
       display: -webkit-box;
       -webkit-box-orient: vertical;
-      -webkit-line-clamp: 3;
+      -webkit-line-clamp: 2;
     }
-    .workspace-description.empty-description {
+    .workspace-folders.empty-description {
       min-height: 0;
+    }
+    .workspace-language-divider {
+      display: block;
+      height: 1px;
+      width: 100%;
+      background: color-mix(in srgb, var(--border) 62%, transparent);
+      margin: 1px 0 0;
+    }
+    .workspace-language-bar {
+      display: flex;
+      width: 100%;
+      height: 3px;
+      overflow: hidden;
+      border-radius: 999px;
+      background: rgba(100, 116, 139, 0.22);
+    }
+    .workspace-language-segment {
+      display: block;
+      height: 100%;
+      min-width: 2px;
+    }
+    .workspace-languages {
+      display: grid;
+      gap: 6px;
+      min-width: 0;
+    }
+    .workspace-language {
+      min-width: 0;
+      display: grid;
+      grid-template-columns: 7px minmax(0, 1fr);
+      align-items: center;
+      gap: 6px;
+      color: color-mix(in srgb, var(--muted) 88%, transparent);
+      font-size: 10px;
+      line-height: 1.2;
+    }
+    .workspace-language-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 999px;
+      background: var(--lang-default);
+      box-shadow: 0 0 8px color-mix(in srgb, currentColor 18%, transparent);
+    }
+    .workspace-language-dot.javascript,
+    .workspace-language-segment.javascript { background: var(--lang-javascript); }
+    .workspace-language-dot.typescript,
+    .workspace-language-segment.typescript { background: var(--lang-typescript); }
+    .workspace-language-dot.rust,
+    .workspace-language-segment.rust { background: var(--lang-rust); }
+    .workspace-language-dot.python,
+    .workspace-language-segment.python { background: var(--lang-python); }
+    .workspace-language-dot.cpp,
+    .workspace-language-segment.cpp { background: var(--lang-cpp); }
+    .workspace-language-dot.go,
+    .workspace-language-segment.go { background: var(--lang-go); }
+    .workspace-language-dot.java,
+    .workspace-language-segment.java { background: var(--lang-java); }
+    .workspace-language-dot.default,
+    .workspace-language-segment.default { background: var(--lang-default); }
+    .workspace-language-text {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
     .empty {
       margin: 8px;
@@ -1002,6 +1180,15 @@ export function renderToolBoxWebview(webview: vscode.Webview, model: any): strin
     });
     document.getElementById('favorite-add')?.addEventListener('click', () => {
       vscode.postMessage({ type: 'action', action: 'favoriteAdd' });
+    });
+    document.getElementById('favorite-refresh')?.addEventListener('click', (event) => {
+      const button = event.currentTarget;
+      if (button instanceof HTMLElement) {
+        button.classList.add('refreshing');
+        button.setAttribute('aria-label', 'Refreshing...');
+        button.setAttribute('title', 'Refreshing...');
+      }
+      vscode.postMessage({ type: 'action', action: 'favoriteRefresh' });
     });
     document.querySelectorAll('button[data-remote-action][data-remote-key]').forEach((button) => {
       button.addEventListener('click', () => {

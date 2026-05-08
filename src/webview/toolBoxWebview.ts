@@ -24,6 +24,7 @@ export type ToolBoxWebviewProviderDeps = {
   bootstrapConfig: () => Promise<void>;
   refreshPinnedProjects: () => Promise<void>;
   addFavoriteWorkspace: () => Promise<void>;
+  refreshFavoriteWorkspaces: () => Promise<void>;
   removeFavoriteWorkspace: (workspacePath: string) => Promise<void>;
   openFavoriteWorkspace: (workspacePath: string) => Promise<void>;
   startReverseTunnel: (remoteKey: string) => Promise<void>;
@@ -111,6 +112,9 @@ export class ToolBoxWebviewProvider implements vscode.WebviewViewProvider {
         return;
       case 'favoriteAdd':
         await this.deps.addFavoriteWorkspace();
+        return;
+      case 'favoriteRefresh':
+        await this.deps.refreshFavoriteWorkspaces();
         return;
       default:
         return;

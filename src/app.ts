@@ -36,12 +36,16 @@ let pinnedProjectsService: PinnedProjectsService | null = null;
 let keyProjectsWorkspaceOverride: string | null = null;
 let keyProjectsCache: KeyProjectsCache | null = null;
 let keyProjectsRefreshPromise: Promise<void> | null = null;
+let favoriteWorkspacesRefreshPromise: Promise<void> | null = null;
 const remoteTunnelStates = new Map<string, RemoteTunnelRuntimeState>();
 const LOCAL_TARGET_CONNECT_FAILURE_LOG_INTERVAL_MS = 30_000;
 const LOCAL_TARGET_CONNECT_FAILURE_CONTEXT_MS = 30_000;
 const REVERSE_TUNNEL_STATE_POLL_INTERVAL_MS = 5_000;
+const FAVORITE_WORKSPACE_ANALYSIS_FILE = 'favorite-workspaces.analysis.json';
+const FAVORITE_LANGUAGE_SCAN_MAX_FILE_BYTES = 1_000_000;
 const TOOLBOX_CONFIGURATION_SECTION = 'myToolbox';
 const TOOLBOX_CONFIG_FILE_SETTING = 'configFile';
+const TOOLBOX_DEBUG_LOGS_SETTING = 'debugLogs';
 const DEFAULT_TOOLBOX_CONFIG_FILE = '.vscode/mytoolbox.config.json';
 const DEFAULT_CREATED_TOOLBOX_CONFIG_FILE = path.join('.vscode', 'mytoolbox.config.json');
 
@@ -174,6 +178,8 @@ type FavoriteWorkspaceViewRow = {
   workspacePath: string;
   name: string;
   description: string;
+  languageSummary: string;
+  languages: FavoriteWorkspaceLanguage[];
   folderSummary: string;
   readmeSummary: string;
   available: boolean;
@@ -182,7 +188,24 @@ type FavoriteWorkspaceViewRow = {
 
 type FavoriteWorkspacesViewModel = {
   issue: string | null;
+  refreshing: boolean;
   rows: FavoriteWorkspaceViewRow[];
+};
+
+type FavoriteWorkspaceLanguage = {
+  name: string;
+  bytes: number;
+  percent: number;
+};
+
+type FavoriteWorkspaceAnalysisEntry = {
+  updatedAt: string;
+  languages: FavoriteWorkspaceLanguage[];
+};
+
+type FavoriteWorkspaceAnalysisFile = {
+  version: 1;
+  workspaces: Record<string, FavoriteWorkspaceAnalysisEntry>;
 };
 
 type ToolBoxAction = {
@@ -258,6 +281,18 @@ type SshStderrLogState = {
   lastLocalTargetConnectFailureLogAt: Map<string, number>;
   localTargetConnectFailureContextUntilMs: number;
 };
+
+function isDebugLoggingEnabled(): boolean {
+  return vscode.workspace
+    .getConfiguration(TOOLBOX_CONFIGURATION_SECTION)
+    .get<boolean>(TOOLBOX_DEBUG_LOGS_SETTING, false);
+}
+
+function appendDebugLine(message: string): void {
+  if (isDebugLoggingEnabled()) {
+    outputChannel?.appendLine(`[debug] ${message}`);
+  }
+}
 
 function getLocalTargetConnectFailureKey(text: string, config: Pick<FileProxyConfig, 'localHost' | 'localPort'>): string | null {
   const hostPattern = new RegExp(`(^|[^\\w.:-])${escapeRegExp(config.localHost)}([^\\w.:-]|$)`, 'i');
@@ -788,7 +823,7 @@ async function getKeyProjectsConfig(workspacePath?: string): Promise<KeyProjects
     workspaceAvailable: true
   };
 
-  outputChannel?.appendLine(
+  appendDebugLine(
     `[key-projects] config path=${result.loadedConfigPath} exists=${result.configExists} mode=${result.mode} rootDir=${result.rootDir || '<empty>'} repos=${result.repoNames.join(', ') || '<none>'} sshTarget=${result.sshTarget || '<empty>'} sshPort=${result.sshPort}`
   );
 
@@ -866,7 +901,7 @@ function resolveWorkspaceFolderPath(workspaceFilePath: string, folderPath: strin
   return path.resolve(path.dirname(workspaceFilePath), folderPath);
 }
 
-function getWorkspaceFolderPaths(folders: unknown, workspaceFilePath: string): string[] {
+function getWorkspaceFolderUris(folders: unknown, workspaceFilePath: string): vscode.Uri[] {
   if (!Array.isArray(folders)) {
     return [];
   }
@@ -877,19 +912,18 @@ function getWorkspaceFolderPaths(folders: unknown, workspaceFilePath: string): s
       }
       const data = folder as Record<string, unknown>;
       if (typeof data.path === 'string' && data.path.trim()) {
-        return resolveWorkspaceFolderPath(workspaceFilePath, data.path.trim());
+        return vscode.Uri.file(resolveWorkspaceFolderPath(workspaceFilePath, data.path.trim()));
       }
       if (typeof data.uri === 'string' && data.uri.trim()) {
         try {
-          const uri = vscode.Uri.parse(data.uri.trim());
-          return uri.scheme === 'file' ? uri.fsPath : null;
+          return vscode.Uri.parse(data.uri.trim());
         } catch {
           return null;
         }
       }
       return null;
     })
-    .filter((entry): entry is string => Boolean(entry));
+    .filter((entry): entry is vscode.Uri => Boolean(entry));
 }
 
 function createFolderSummary(folders: unknown, workspaceFilePath: string): string {
@@ -902,44 +936,245 @@ function createFolderSummary(folders: unknown, workspaceFilePath: string): strin
   if (names.length === 0) {
     return '';
   }
-  const visible = names.slice(0, 3).join(', ');
-  const suffix = names.length > 3 ? `, +${names.length - 3} more` : '';
-  return `${names.length} folder${names.length === 1 ? '' : 's'}: ${visible}${suffix}`;
+  return [
+    ...names.slice(0, 2),
+    ...(names.length > 2 ? [`+${names.length - 2} more`] : [])
+  ].join(', ');
 }
 
-function extractReadmeSummary(text: string): string {
-  const normalized = text
-    .replace(/\r\n/g, '\n')
-    .split('\n')
-    .map((line) => line.replace(/^#+\s*/, '').trim())
-    .filter((line) => line && !/^```/.test(line));
-  const paragraph = normalized.join(' ').replace(/\s+/g, ' ').trim();
-  if (!paragraph) {
-    return '';
+const FAVORITE_LANGUAGE_BY_EXTENSION = new Map<string, string>([
+  ['.ts', 'TypeScript'],
+  ['.tsx', 'TypeScript'],
+  ['.js', 'JavaScript'],
+  ['.jsx', 'JavaScript'],
+  ['.mjs', 'JavaScript'],
+  ['.cjs', 'JavaScript'],
+  ['.py', 'Python'],
+  ['.rs', 'Rust'],
+  ['.cpp', 'C++'],
+  ['.cc', 'C++'],
+  ['.cxx', 'C++'],
+  ['.hpp', 'C++'],
+  ['.hh', 'C++'],
+  ['.hxx', 'C++'],
+  ['.h', 'C++'],
+  ['.c', 'C'],
+  ['.go', 'Go'],
+  ['.java', 'Java'],
+  ['.cs', 'C#'],
+  ['.kt', 'Kotlin'],
+  ['.kts', 'Kotlin'],
+  ['.swift', 'Swift'],
+  ['.php', 'PHP'],
+  ['.rb', 'Ruby'],
+  ['.sh', 'Shell'],
+  ['.bash', 'Shell'],
+  ['.zsh', 'Shell'],
+  ['.ps1', 'PowerShell'],
+  ['.html', 'HTML'],
+  ['.css', 'CSS'],
+  ['.scss', 'SCSS'],
+  ['.vue', 'Vue'],
+  ['.svelte', 'Svelte'],
+  ['.dart', 'Dart'],
+  ['.scala', 'Scala'],
+  ['.lua', 'Lua'],
+  ['.r', 'R'],
+  ['.jl', 'Julia']
+]);
+
+const FAVORITE_LANGUAGE_IGNORED_DIRS = new Set([
+  '.git',
+  'node_modules',
+  'dist',
+  'build',
+  'out',
+  'target',
+  'vendor',
+  '.venv',
+  '__pycache__'
+]);
+
+const FAVORITE_LANGUAGE_IGNORED_FILES = new Set([
+  'package-lock.json',
+  'pnpm-lock.yaml',
+  'yarn.lock',
+  'cargo.lock',
+  'composer.lock'
+]);
+
+const FAVORITE_LANGUAGE_IGNORED_EXTENSIONS = new Set([
+  '.png',
+  '.jpg',
+  '.jpeg',
+  '.gif',
+  '.webp',
+  '.ico',
+  '.svg',
+  '.zip',
+  '.gz',
+  '.tgz',
+  '.rar',
+  '.7z',
+  '.pdf',
+  '.exe',
+  '.dll',
+  '.so',
+  '.dylib',
+  '.bin',
+  '.lock',
+  '.map'
+]);
+
+function formatFavoriteWorkspaceLanguageSummary(languages: FavoriteWorkspaceLanguage[]): string {
+  return languages
+    .slice(0, 2)
+    .map((entry) => `${entry.name} ${entry.percent}%`)
+    .join(' · ');
+}
+
+function getFavoriteWorkspaceAnalysisUri(): vscode.Uri {
+  if (!extensionContextRef) {
+    throw new Error('Extension context is not initialized.');
   }
-  const sentenceMatch = paragraph.match(/^.{1,220}?(?:[.!?。！？](?:\s|$)|$)/);
-  return (sentenceMatch?.[0] ?? paragraph).slice(0, 220).trim();
+  return vscode.Uri.joinPath(extensionContextRef.globalStorageUri, FAVORITE_WORKSPACE_ANALYSIS_FILE);
 }
 
-async function readFirstReadmeSummary(folderPaths: string[]): Promise<string> {
-  const candidates = ['README.md', 'README.MD', 'readme.md', 'Readme.md'];
-  for (const folderPath of folderPaths) {
-    for (const candidate of candidates) {
-      const readmePath = path.join(folderPath, candidate);
-      try {
-        const bytes = await vscode.workspace.fs.readFile(vscode.Uri.file(readmePath));
-        const summary = extractReadmeSummary(Buffer.from(bytes).toString('utf8'));
-        if (summary) {
-          return summary;
-        }
-      } catch (error) {
-        if (!isFileNotFoundError(error)) {
-          outputChannel?.appendLine(`[favorite-workspaces] failed to read README '${readmePath}': ${error instanceof Error ? error.message : String(error)}`);
-        }
+async function readFavoriteWorkspaceAnalysisFile(): Promise<FavoriteWorkspaceAnalysisFile> {
+  const uri = getFavoriteWorkspaceAnalysisUri();
+  try {
+    const raw = JSON.parse(await readConfigText(uri)) as unknown;
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+      throw new Error('favorite workspace analysis root must be an object');
+    }
+    const data = raw as { version?: unknown; workspaces?: unknown };
+    const workspaces = data.workspaces && typeof data.workspaces === 'object' && !Array.isArray(data.workspaces)
+      ? data.workspaces as Record<string, FavoriteWorkspaceAnalysisEntry>
+      : {};
+    return { version: 1, workspaces };
+  } catch (error) {
+    if (isFileNotFoundError(error)) {
+      return { version: 1, workspaces: {} };
+    }
+    throw error;
+  }
+}
+
+async function writeFavoriteWorkspaceAnalysisFile(data: FavoriteWorkspaceAnalysisFile): Promise<void> {
+  const uri = getFavoriteWorkspaceAnalysisUri();
+  if (!extensionContextRef) {
+    throw new Error('Extension context is not initialized.');
+  }
+  await vscode.workspace.fs.createDirectory(extensionContextRef.globalStorageUri);
+  await vscode.workspace.fs.writeFile(uri, Buffer.from(JSON.stringify(data, null, 2) + '\n', 'utf8'));
+}
+
+function getFavoriteWorkspaceAnalysisKey(workspacePath: string): string {
+  return path.normalize(workspacePath);
+}
+
+async function getFavoriteWorkspaceAnalysis(workspacePath: string): Promise<FavoriteWorkspaceAnalysisEntry | null> {
+  const cache = await readFavoriteWorkspaceAnalysisFile();
+  return cache.workspaces[getFavoriteWorkspaceAnalysisKey(workspacePath)] ?? null;
+}
+
+async function scanFavoriteWorkspaceLanguages(workspacePath: string): Promise<FavoriteWorkspaceLanguage[]> {
+  const bytes = await vscode.workspace.fs.readFile(vscode.Uri.file(workspacePath));
+  const raw = JSON.parse(Buffer.from(bytes).toString('utf8')) as unknown;
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new Error('workspace file root must be a JSON object');
+  }
+
+  const folderUris = getWorkspaceFolderUris((raw as Record<string, unknown>).folders, workspacePath);
+  const languageBytes = new Map<string, number>();
+  for (const folderUri of folderUris) {
+    await scanFavoriteWorkspaceFolder(folderUri, languageBytes);
+  }
+
+  const totalBytes = Array.from(languageBytes.values()).reduce((sum, value) => sum + value, 0);
+  if (totalBytes <= 0) {
+    return [];
+  }
+
+  return Array.from(languageBytes.entries())
+    .map(([name, bytes]) => ({
+      name,
+      bytes,
+      percent: Math.max(1, Math.round((bytes / totalBytes) * 100))
+    }))
+    .sort((left, right) => right.bytes - left.bytes || left.name.localeCompare(right.name))
+    .slice(0, 2);
+}
+
+async function scanFavoriteWorkspaceFolder(folderUri: vscode.Uri, languageBytes: Map<string, number>): Promise<void> {
+  let entries: Array<[string, vscode.FileType]>;
+  try {
+    entries = await vscode.workspace.fs.readDirectory(folderUri);
+  } catch (error) {
+    if (!isFileNotFoundError(error)) {
+      outputChannel?.appendLine(`[favorite-workspaces] failed to scan '${folderUri.toString()}': ${error instanceof Error ? error.message : String(error)}`);
+    }
+    return;
+  }
+
+  for (const [entryName, entryType] of entries) {
+    const entryUri = vscode.Uri.joinPath(folderUri, entryName);
+    if ((entryType & vscode.FileType.Directory) !== 0) {
+      if (!FAVORITE_LANGUAGE_IGNORED_DIRS.has(entryName.toLowerCase())) {
+        await scanFavoriteWorkspaceFolder(entryUri, languageBytes);
+      }
+      continue;
+    }
+    if ((entryType & vscode.FileType.File) === 0) {
+      continue;
+    }
+
+    const extension = path.extname(entryName).toLowerCase();
+    if (FAVORITE_LANGUAGE_IGNORED_FILES.has(entryName.toLowerCase()) || FAVORITE_LANGUAGE_IGNORED_EXTENSIONS.has(extension)) {
+      continue;
+    }
+
+    const language = FAVORITE_LANGUAGE_BY_EXTENSION.get(extension);
+    if (!language) {
+      continue;
+    }
+
+    try {
+      const stat = await vscode.workspace.fs.stat(entryUri);
+      if (stat.size <= 0 || stat.size > FAVORITE_LANGUAGE_SCAN_MAX_FILE_BYTES) {
+        continue;
+      }
+      languageBytes.set(language, (languageBytes.get(language) ?? 0) + stat.size);
+    } catch (error) {
+      if (!isFileNotFoundError(error)) {
+        outputChannel?.appendLine(`[favorite-workspaces] failed to stat '${entryUri.toString()}': ${error instanceof Error ? error.message : String(error)}`);
       }
     }
   }
-  return '';
+}
+
+async function refreshFavoriteWorkspaceAnalysis(workspacePaths: string[]): Promise<void> {
+  const cache = await readFavoriteWorkspaceAnalysisFile();
+  const activeKeys = new Set(workspacePaths.map(getFavoriteWorkspaceAnalysisKey));
+  for (const key of Object.keys(cache.workspaces)) {
+    if (!activeKeys.has(key)) {
+      delete cache.workspaces[key];
+    }
+  }
+
+  for (const workspacePath of workspacePaths) {
+    try {
+      const normalized = getFavoriteWorkspaceAnalysisKey(workspacePath);
+      cache.workspaces[normalized] = {
+        updatedAt: new Date().toISOString(),
+        languages: await scanFavoriteWorkspaceLanguages(workspacePath)
+      };
+    } catch (error) {
+      outputChannel?.appendLine(`[favorite-workspaces] failed to analyze '${workspacePath}': ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  await writeFavoriteWorkspaceAnalysisFile(cache);
 }
 
 async function getFavoriteWorkspaceRow(workspacePath: string): Promise<FavoriteWorkspaceViewRow> {
@@ -952,14 +1187,17 @@ async function getFavoriteWorkspaceRow(workspacePath: string): Promise<FavoriteW
     }
     const data = raw as Record<string, unknown>;
     const folderSummary = createFolderSummary(data.folders, workspacePath);
-    const readmeSummary = await readFirstReadmeSummary(getWorkspaceFolderPaths(data.folders, workspacePath));
-    const description = [folderSummary, readmeSummary].filter(Boolean).join(' | ');
+    const analysis = await getFavoriteWorkspaceAnalysis(workspacePath);
+    const languageSummary = formatFavoriteWorkspaceLanguageSummary(analysis?.languages ?? []);
+    const description = [folderSummary, languageSummary].filter(Boolean).join(' | ');
     return {
       workspacePath,
       name,
       description,
+      languageSummary,
+      languages: analysis?.languages ?? [],
       folderSummary,
-      readmeSummary,
+      readmeSummary: '',
       available: true,
       error: null
     };
@@ -968,6 +1206,8 @@ async function getFavoriteWorkspaceRow(workspacePath: string): Promise<FavoriteW
       workspacePath,
       name,
       description: '',
+      languageSummary: '',
+      languages: [],
       folderSummary: '',
       readmeSummary: '',
       available: false,
@@ -982,16 +1222,19 @@ async function getFavoriteWorkspacesViewModel(): Promise<FavoriteWorkspacesViewM
     if (!config.configExists) {
       return {
         issue: null,
+        refreshing: Boolean(favoriteWorkspacesRefreshPromise),
         rows: []
       };
     }
     return {
       issue: null,
+      refreshing: Boolean(favoriteWorkspacesRefreshPromise),
       rows: await Promise.all(config.workspaceFiles.map((workspacePath) => getFavoriteWorkspaceRow(workspacePath)))
     };
   } catch (error) {
     return {
       issue: error instanceof Error ? error.message : String(error),
+      refreshing: Boolean(favoriteWorkspacesRefreshPromise),
       rows: []
     };
   }
@@ -1221,7 +1464,7 @@ async function loadKeyProjectStatusesFromBatchedSsh(config: KeyProjectsConfig): 
   const remoteRunDir = getRemoteKeyProjectsRunDir(token);
   const script = buildRemoteKeyProjectsBatchScript(config, remoteRunDir);
   const bootstrapScript = buildRemoteKeyProjectsBootstrapScript(script);
-  outputChannel?.appendLine(`[key-projects] batched ssh script=${remoteScriptPath} runDir=${remoteRunDir}`);
+  appendDebugLine(`[key-projects] batched ssh script=${remoteScriptPath} runDir=${remoteRunDir}`);
 
   const output = await runCommandWithInput(
     config.sshPath,
@@ -1296,7 +1539,7 @@ async function loadKeyProjectStatusesFromBatchedSsh(config: KeyProjectsConfig): 
 }
 
 async function loadKeyProjectStatuses(config: KeyProjectsConfig): Promise<KeyProjectStatus[]> {
-  outputChannel?.appendLine(`[key-projects] refresh start count=${config.repoNames.length}`);
+  appendDebugLine(`[key-projects] refresh start count=${config.repoNames.length}`);
   if (config.mode === 'ssh') {
     try {
       return await loadKeyProjectStatusesFromBatchedSsh(config);
@@ -1331,7 +1574,7 @@ async function refreshKeyProjects(): Promise<void> {
 
     const statuses = await loadKeyProjectStatuses(config);
     setCachedKeyProjectStatuses(config, statuses);
-    outputChannel?.appendLine(`[key-projects] refresh complete count=${statuses.length}`);
+    appendDebugLine(`[key-projects] refresh complete count=${statuses.length}`);
     void toolBoxWebviewProvider?.refresh();
   })();
 
@@ -1455,7 +1698,7 @@ async function showKeyProjectStatus(repoName: string): Promise<string> {
   }
 
   const text = formatKeyProjectOutput(status);
-  outputChannel.appendLine(`[key-projects] showing detailed status for repo=${repoName} display=${status.repoName}`);
+  appendDebugLine(`[key-projects] showing detailed status for repo=${repoName} display=${status.repoName}`);
   outputChannel.appendLine(text);
   outputChannel.show(true);
   return text;
@@ -1570,7 +1813,7 @@ function verifySshExists(sshPath: string): Promise<void> {
     const check = spawn(sshPath, ['-V']);
 
     const onData = (data: Buffer) => {
-      outputChannel.appendLine(`[ssh-check] ${data.toString().trim()}`);
+      appendDebugLine(`[ssh-check] ${data.toString().trim()}`);
     };
 
     check.stdout.on('data', onData);
@@ -1778,7 +2021,7 @@ async function syncProxyStateFromSystem(config?: RuntimeProxyConfig): Promise<bo
       } else {
         state.externalPid = existing.pid;
         if (state.state !== 'external') {
-          outputChannel.appendLine(`[sync] detected external reverse tunnel remote=${remote.key} pid=${existing.pid}`);
+          appendDebugLine(`[sync] detected external reverse tunnel remote=${remote.key} pid=${existing.pid}`);
           setRemoteTunnelState(remote.key, 'external');
         }
       }
@@ -1822,9 +2065,9 @@ async function startRemoteTunnel(remoteKey: string): Promise<void> {
     return;
   }
 
-  outputChannel.appendLine(`[config] using file: ${config.loadedConfigPath}`);
+  appendDebugLine(`[config] using file: ${config.loadedConfigPath}`);
   if (vscode.env.remoteName) {
-    outputChannel.appendLine(`[mode] workspace is remote (${vscode.env.remoteName}), tunnel runs on local UI host.`);
+    appendDebugLine(`[mode] workspace is remote (${vscode.env.remoteName}), tunnel runs on local UI host.`);
   }
 
   await syncProxyStateFromSystem(config);
@@ -1873,7 +2116,7 @@ async function startRemoteTunnel(remoteKey: string): Promise<void> {
 
   args.push(remote.remoteTarget);
 
-  outputChannel.appendLine(`[start] ${config.sshPath} ${args.join(' ')}`);
+  appendDebugLine(`[start] ${config.sshPath} ${args.join(' ')}`);
 
   try {
     state.sshProcess = spawn(config.sshPath, args);
@@ -1910,7 +2153,7 @@ async function startRemoteTunnel(remoteKey: string): Promise<void> {
   }, config.connectionReadyDelayMs);
 
   state.sshProcess.stdout.on('data', (data: Buffer) => {
-    outputChannel.appendLine(`[stdout] [${remote.key}] ${data.toString().trim()}`);
+    appendDebugLine(`[stdout] [${remote.key}] ${data.toString().trim()}`);
   });
 
   state.sshProcess.stderr.on('data', (data: Buffer) => {
@@ -1940,7 +2183,7 @@ async function startRemoteTunnel(remoteKey: string): Promise<void> {
   });
 
   state.sshProcess.on('close', (code: number | null, signal: NodeJS.Signals | null) => {
-    outputChannel.appendLine(`[stop] [${remote.key}] ssh exited with code=${code} signal=${signal}`);
+    appendDebugLine(`[stop] [${remote.key}] ssh exited with code=${code} signal=${signal}`);
     if (state.connectTimer) {
       clearTimeout(state.connectTimer);
       state.connectTimer = null;
@@ -2435,12 +2678,34 @@ async function addFavoriteWorkspace(): Promise<string | undefined> {
   const normalizedSelected = path.normalize(selected);
   const exists = existing.some((entry) => path.normalize(resolvePathFromConfigDir(configPath, entry)).toLowerCase() === normalizedSelected.toLowerCase());
   if (!exists) {
-    await writeFavoriteWorkspaceFiles(configPath, [...existing, normalizedSelected]);
+    const next = [...existing, normalizedSelected];
+    await writeFavoriteWorkspaceFiles(configPath, next);
+    await refreshFavoriteWorkspaceAnalysis(next.map((entry) => resolvePathFromConfigDir(configPath, entry)));
+    void toolBoxWebviewProvider?.refresh();
   } else {
     await updateToolBoxConfigFileSetting(configPath);
     void toolBoxWebviewProvider?.refresh();
   }
   return normalizedSelected;
+}
+
+async function refreshFavoriteWorkspaces(): Promise<void> {
+  if (favoriteWorkspacesRefreshPromise) {
+    return favoriteWorkspacesRefreshPromise;
+  }
+
+  favoriteWorkspacesRefreshPromise = (async () => {
+    const config = await getFavoriteWorkspacesConfig();
+    await refreshFavoriteWorkspaceAnalysis(config.workspaceFiles);
+  })();
+
+  void toolBoxWebviewProvider?.refresh();
+  try {
+    await favoriteWorkspacesRefreshPromise;
+  } finally {
+    favoriteWorkspacesRefreshPromise = null;
+    void toolBoxWebviewProvider?.refresh();
+  }
 }
 
 async function removeFavoriteWorkspace(workspacePath: string): Promise<void> {
@@ -2450,6 +2715,7 @@ async function removeFavoriteWorkspace(workspacePath: string): Promise<void> {
   const next = getFavoriteWorkspaceFilesForUpdate(root)
     .filter((entry) => path.normalize(resolvePathFromConfigDir(configPath, entry)).toLowerCase() !== normalizedTarget);
   await writeFavoriteWorkspaceFiles(configPath, next);
+  await refreshFavoriteWorkspaceAnalysis(next.map((entry) => resolvePathFromConfigDir(configPath, entry)));
 }
 
 async function openFavoriteWorkspace(workspacePath: string): Promise<void> {
@@ -2503,6 +2769,7 @@ export function activate(context: vscode.ExtensionContext): void {
     addFavoriteWorkspace: async () => {
       await addFavoriteWorkspace();
     },
+    refreshFavoriteWorkspaces,
     removeFavoriteWorkspace,
     openFavoriteWorkspace,
     startReverseTunnel: (remoteKey) => reverseTunnelService?.start(remoteKey) ?? startRemoteTunnel(remoteKey),
@@ -2510,9 +2777,10 @@ export function activate(context: vscode.ExtensionContext): void {
   });
 
   if (vscode.env.remoteName) {
-    outputChannel.appendLine(`[mode] remote workspace detected (${vscode.env.remoteName}); extension runs on local UI host.`);
+    appendDebugLine(`[mode] remote workspace detected (${vscode.env.remoteName}); extension runs on local UI host.`);
   }
 
+  void vscode.workspace.fs.createDirectory(context.globalStorageUri);
   void reverseTunnelService.syncStateFromSystem();
   startReverseTunnelStatePolling(context);
 
@@ -2589,6 +2857,12 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     vscode.commands.registerCommand('reverseProxy.test.addFavoriteWorkspace', async () => {
       return addFavoriteWorkspace();
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('reverseProxy.test.refreshFavoriteWorkspaces', async () => {
+      return refreshFavoriteWorkspaces();
     })
   );
 

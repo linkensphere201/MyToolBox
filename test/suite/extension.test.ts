@@ -461,7 +461,7 @@ suite('CodeOps Panel Extension Integration Tests', () => {
       version?: string;
       extensionKind?: string[];
       contributes?: {
-        configuration?: unknown;
+        configuration?: { properties?: Record<string, unknown> };
         viewsContainers?: { activitybar?: Array<{ title?: string }> };
         views?: { reverseProxy?: Array<{ name?: string }> };
       };
@@ -472,6 +472,7 @@ suite('CodeOps Panel Extension Integration Tests', () => {
     assert.ok(Array.isArray(manifest.extensionKind), 'extensionKind should be an array');
     assert.deepStrictEqual(manifest.extensionKind, ['ui']);
     assert.ok(manifest.contributes?.configuration, 'reverse proxy settings should still be contributed');
+    assert.ok(manifest.contributes?.configuration?.properties?.['myToolbox.debugLogs'], 'debug log setting should be contributed');
     assert.strictEqual(manifest.contributes?.viewsContainers?.activitybar?.[0]?.title, 'CodeOps Panel');
     assert.strictEqual(manifest.contributes?.views?.reverseProxy?.[0]?.name, 'CodeOps Panel');
   });
@@ -630,6 +631,8 @@ suite('CodeOps Panel Extension Integration Tests', () => {
       assert.ok(html.includes('background: linear-gradient(135deg, #4a9cff, var(--start-600));'), 'Start button should use the blue gradient');
       assert.ok(html.includes('backdrop-filter: blur(18px);'), 'Cards and popovers should use a glass blur treatment');
       assert.ok(html.includes('.workspace-card::before'), 'Favorite workspace cards should include a purple side accent');
+      assert.ok(html.includes('min-height: 124px;'), 'Favorite workspace cards should be slightly roomier');
+      assert.ok(html.includes('font-size: 14px;'), 'Favorite workspace titles should use the roomier title size');
       assert.ok(html.includes('<table class="dashboard-table rt-table">'), 'Reverse tunnel should use a table wrapper');
       assert.ok(html.includes('class="rt-proxy-main"'), 'Reverse tunnel should combine state, host, and info in one proxy cell');
       assert.ok(html.includes('class="rt-host-code">10.99.0.1:4001</code>'), 'Host should render with inline-code styling');
@@ -651,7 +654,7 @@ suite('CodeOps Panel Extension Integration Tests', () => {
     }
   });
 
-  test('favorite workspaces should render cards from workspace files and README summaries', async () => {
+  test('favorite workspaces should render cards from workspace files and stable summaries', async () => {
     const workspaceBase = path.join(testDir, 'favorite-workspaces');
     const frontendDir = path.join(workspaceBase, 'frontend');
     const apiDir = path.join(workspaceBase, 'api');
@@ -665,7 +668,8 @@ suite('CodeOps Panel Extension Integration Tests', () => {
         {
           folders: [
             { name: 'Frontend Development', path: 'frontend' },
-            { path: 'api' }
+            { path: 'api' },
+            { path: 'docs' }
           ]
         },
         null,
@@ -683,15 +687,23 @@ suite('CodeOps Panel Extension Integration Tests', () => {
     assert.strictEqual(model.rows[0]?.name, 'Frontend Development');
     assert.strictEqual(model.rows[0]?.available, true);
     assert.strictEqual(model.rows[0]?.workspacePath, workspaceFile);
-    assert.ok(model.rows[0]?.description.includes('2 folders: Frontend Development, api'));
-    assert.ok(model.rows[0]?.description.includes('Frontend React and TypeScript projects with modern tooling.'));
+    assert.ok(model.rows[0]?.description.includes('Frontend Development, api, +1 more'));
+    assert.ok(!model.rows[0]?.description.includes('folders:'));
+    assert.ok(!model.rows[0]?.description.includes('Frontend React and TypeScript projects with modern tooling.'));
 
     const html = (await vscode.commands.executeCommand('reverseProxy.test.renderToolBoxHtml')) as string;
     assert.ok(html.includes('class="workspace-card"'), 'Favorite workspace card should render');
     assert.ok(html.includes('Frontend Development'), 'Workspace name should render');
-    assert.ok(html.includes('2 folders: Frontend Development, api'), 'Folder summary should render');
+    assert.ok(html.includes('title="Frontend Development"'), 'Workspace name should expose full title on hover');
+    assert.ok(html.includes('Frontend Development, api, +1 more'), 'Folder summary should render');
+    assert.ok(html.includes('class="workspace-folder-icon"'), 'Folder summary should render with a folder icon');
+    assert.ok(!html.includes('3 folders:'), 'Folder summary should not include folder count prefix');
+    assert.ok(!html.includes('class="workspace-language-divider"'), 'Language divider should not render without languages');
+    assert.ok(!html.includes('class="workspace-language-bar"'), 'Language distribution should not render without languages');
     assert.ok(html.includes('data-workspace-path="'), 'Workspace card should include open path data');
     assert.ok(html.includes('data-workspace-remove="'), 'Workspace card should include remove path data');
+    assert.ok(html.includes('id="favorite-refresh"'), 'Favorite workspace refresh button should render');
+    assert.ok(html.includes("type: 'action', action: 'favoriteRefresh'"), 'Webview should post favorite refresh messages');
     assert.ok(!html.includes('workspace-star'), 'Favorite workspace cards should not render star icons');
     assert.ok(!html.includes('<div class="card"><div class="workspace-grid">'), 'Favorite workspace list should not be wrapped in an outer card frame');
     assert.ok(html.includes("type: 'favoriteWorkspace', action: 'open'"), 'Webview should post open workspace messages');
@@ -728,6 +740,64 @@ suite('CodeOps Panel Extension Integration Tests', () => {
     await vscode.commands.executeCommand('reverseProxy.test.removeFavoriteWorkspace', workspaceFile);
     created = readTestConfig() as { favoriteWorkspaces?: { workspaceFiles?: string[] } };
     assert.deepStrictEqual(created.favoriteWorkspaces?.workspaceFiles, []);
+  });
+
+  test('favorite workspaces add should analyze top local languages', async () => {
+    const workspaceBase = path.join(testDir, 'favorite-language-scan');
+    const appDir = path.join(workspaceBase, 'app');
+    const nativeDir = path.join(workspaceBase, 'native');
+    const cppDir = path.join(workspaceBase, 'cpp');
+    const ignoredDir = path.join(appDir, 'node_modules', 'ignored');
+    fs.mkdirSync(appDir, { recursive: true });
+    fs.mkdirSync(nativeDir, { recursive: true });
+    fs.mkdirSync(cppDir, { recursive: true });
+    fs.mkdirSync(ignoredDir, { recursive: true });
+    fs.writeFileSync(path.join(appDir, 'index.ts'), 'const message: string = "typescript";\n'.repeat(20), 'utf8');
+    fs.writeFileSync(path.join(nativeDir, 'lib.rs'), 'pub fn run() {}\n'.repeat(2), 'utf8');
+    fs.writeFileSync(path.join(cppDir, 'main.cpp'), 'int main() { return 0; }\n'.repeat(15), 'utf8');
+    fs.writeFileSync(path.join(ignoredDir, 'ignored.py'), 'print("ignored")\n'.repeat(200), 'utf8');
+
+    const workspaceFile = path.join(workspaceBase, 'Language Scan.code-workspace');
+    fs.writeFileSync(
+      workspaceFile,
+      JSON.stringify({ folders: [{ path: 'app' }, { path: 'native' }, { uri: vscode.Uri.file(cppDir).toString() }] }, null, 2),
+      'utf8'
+    );
+    writeFavoriteWorkspacesConfig([]);
+    await config.update('configFile', testConfigFilePath, vscode.ConfigurationTarget.Global);
+
+    await withWindowPrompts(
+      { folders: [workspaceFile] },
+      async () => {
+        await vscode.commands.executeCommand('reverseProxy.test.addFavoriteWorkspace');
+      }
+    );
+
+    const model = (await vscode.commands.executeCommand('reverseProxy.test.getFavoriteWorkspacesViewState')) as {
+      rows: Array<{ languageSummary: string; languages: Array<{ name: string; percent: number }> }>;
+    };
+    assert.ok(model.rows[0]?.languageSummary.includes('TypeScript'), 'TypeScript should be included in language summary');
+    assert.ok(model.rows[0]?.languageSummary.includes('C++'), 'C++ should be included in language summary');
+    assert.ok(!model.rows[0]?.languageSummary.includes('Python'), 'Ignored directories should not contribute languages');
+    assert.strictEqual(model.rows[0]?.languages.length, 2);
+    const html = (await vscode.commands.executeCommand('reverseProxy.test.renderToolBoxHtml')) as string;
+    assert.ok(html.includes('class="workspace-language-divider"'), 'Language divider should render when languages exist');
+    assert.ok(html.includes('class="workspace-language-bar"'), 'Language distribution bar should render when languages exist');
+    assert.ok(html.includes('workspace-language-segment typescript'), 'TypeScript distribution segment should render');
+    assert.ok(html.includes('workspace-language-dot typescript'), 'TypeScript language dot should render');
+    assert.ok(html.includes('workspace-language-dot cpp'), 'C++ language dot should render');
+    assert.ok(html.includes('--workspace-accent: var(--lang-typescript);'), 'Top language color should drive the workspace side accent');
+    assert.ok(!html.includes('workspace-language-badge'), 'Language list should no longer render letter badges');
+    assert.ok(!html.includes('>TS</span>'), 'TypeScript should not render as badge text');
+    assert.ok(!html.includes('>CP</span>'), 'C++ should not render as badge text');
+    assert.ok(!html.includes('workspace-language-dot python'), 'Ignored Python file should not render a language dot');
+
+    fs.writeFileSync(path.join(nativeDir, 'extra.rs'), 'pub fn extra() { println!("more rust"); }\n'.repeat(50), 'utf8');
+    await vscode.commands.executeCommand('reverseProxy.test.refreshFavoriteWorkspaces');
+    const refreshed = (await vscode.commands.executeCommand('reverseProxy.test.getFavoriteWorkspacesViewState')) as {
+      rows: Array<{ languageSummary: string; languages: Array<{ name: string; percent: number }> }>;
+    };
+    assert.ok(refreshed.rows[0]?.languageSummary.includes('Rust'), 'Refresh should keep scanned language summary available');
   });
 
   test('favorite workspaces add should reject remote workspace files', async () => {
